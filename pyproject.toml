@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tak"
+version = "0.1.0"
+description = "A Tak game engine with terminal and graphical interfaces and AI agents."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+# Add `license = { file = "LICENSE" }` once you have chosen a license.
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment :: Board Games",
+]
+
+[project.optional-dependencies]
+gui = [
+    "pygame>=2.5",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tak"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src"]
+
+# pygame is only needed for the optional GUI and may not be installed.
+[[tool.mypy.overrides]]
+module = "pygame.*"
+ignore_missing_imports = true

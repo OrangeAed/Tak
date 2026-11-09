@@ -18,7 +18,7 @@ The full ruleset this project implements is in [`docs/rules.md`](docs/rules.md).
 Requires Python 3.12
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/OrangeAed/Tak.git
 cd tak
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
