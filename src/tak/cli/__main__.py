@@ -1,1 +1,3 @@
-"""CLI entry point placeholder."""
+from tak.cli.app import main
+
+raise SystemExit(main())

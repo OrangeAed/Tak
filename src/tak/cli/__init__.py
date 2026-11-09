@@ -1,1 +1,1 @@
-"""CLI package placeholder."""
+"""Terminal interface for playing Tak."""
