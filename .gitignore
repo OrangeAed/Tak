@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local saved games and match output
+saves/*
+!saves/.gitkeep
