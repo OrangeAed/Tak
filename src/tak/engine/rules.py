@@ -126,8 +126,9 @@ def _find_road_along(board: Board, color: Color, axis: int) -> list[Square] | No
     last = board.size - 1
     parent: dict[Square, Square | None] = {}
     queue: deque[Square] = deque()
-    for square in board.squares():
-        if square[axis] == 0 and _is_road_square(board, color, square):
+    for index in range(board.size):  # the starting edge, in the same order as board.squares()
+        square = Square(0, index) if axis == 0 else Square(index, 0)
+        if _is_road_square(board, color, square):
             parent[square] = None
             queue.append(square)
     while queue:

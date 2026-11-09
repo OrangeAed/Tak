@@ -7,11 +7,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from tak.engine.board import Board, Direction, Square
-from tak.engine.pieces import Piece, PieceType
+from tak.engine.pieces import Color, Piece, PieceType
 from tak.engine.rules import drop_problem
 
 if TYPE_CHECKING:
-    from tak.engine.game import Game
+    from tak.engine.game import Game, Reserve
 
 
 @dataclass(frozen=True)
@@ -52,32 +52,36 @@ def legal_moves(game: Game) -> list[Move]:
     """Every legal move for the player to move (empty once the game is over)."""
     if game.is_over:
         return []
-    moves: list[Move] = list(_placements(game))
-    if not game.in_opening:
-        moves.extend(_slides(game))
+    if game.in_opening:
+        # Each player's first move places a flat stone of the opponent's color.
+        return list(_placements(game.board, [PieceType.FLAT]))
+    return regular_moves(game.board, game.to_move, game.reserve(game.to_move))
+
+
+def regular_moves(board: Board, color: Color, reserve: Reserve) -> list[Move]:
+    """Every move ``color`` could make on a regular (non-opening) turn.
+
+    This doesn't depend on whose turn it actually is, so it can also answer
+    "what could this player do if they moved again right now?"
+    """
+    types: list[PieceType] = []
+    if reserve.stones > 0:
+        types += [PieceType.FLAT, PieceType.WALL]
+    if reserve.caps > 0:
+        types.append(PieceType.CAP)
+    moves: list[Move] = list(_placements(board, types))
+    moves.extend(_slides(board, color))
     return moves
 
 
-def _placements(game: Game) -> Iterator[PlaceMove]:
-    if game.in_opening:
-        # Each player's first move places a flat stone of the opponent's color.
-        types = [PieceType.FLAT]
-    else:
-        reserve = game.reserve(game.to_move)
-        types = []
-        if reserve.stones > 0:
-            types += [PieceType.FLAT, PieceType.WALL]
-        if reserve.caps > 0:
-            types.append(PieceType.CAP)
-    for square in game.board.squares():
-        if not game.board.stack(square):
+def _placements(board: Board, types: list[PieceType]) -> Iterator[PlaceMove]:
+    for square in board.squares():
+        if not board.stack(square):
             for piece in types:
                 yield PlaceMove(square, piece)
 
 
-def _slides(game: Game) -> Iterator[SlideMove]:
-    board = game.board
-    color = game.to_move
+def _slides(board: Board, color: Color) -> Iterator[SlideMove]:
     for square in board.squares():
         stack = board.stack(square)
         if not stack or stack[-1].color is not color:

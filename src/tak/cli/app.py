@@ -43,10 +43,14 @@ def run(
     write(f"Tak on a {game.size}x{game.size} board. Type 'help' for how to enter moves.")
     write(LEGEND)
 
+    # Whether the move just played threatens to win next turn. It is announced
+    # once, in the status shown straight after that move.
+    tak = False
     while game.result is None:
         write("")
         write(render_board(game.board))
-        write(render_status(game))
+        write(render_status(game, tak=tak))
+        tak = False
         try:
             line = read(_prompt(game)).strip()
         except EOFError:
@@ -73,12 +77,15 @@ def run(
             moves = " ".join(format_move(move) for move in game.legal_moves())
             write(textwrap.fill(moves, width=78))
         else:
+            mover = game.to_move
             try:
                 game.play(parse_move(line))
             except NotationError as exc:
                 write(str(exc))
             except IllegalMoveError as exc:
                 write(f"Illegal move: {exc}.")
+            else:
+                tak = game.threatens_win(mover)
 
     write("")
     write(render_board(game.board))

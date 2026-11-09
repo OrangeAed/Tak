@@ -48,10 +48,18 @@ def _describe_reserve(game: Game, color: Color) -> str:
     return text
 
 
-def render_status(game: Game) -> str:
-    """Reserves and whose turn it is."""
+def render_status(game: Game, tak: bool = False) -> str:
+    """Reserves and whose turn it is.
+
+    With ``tak`` set, a "Tak!" line (announcing that the last move threatens
+    to win next turn) goes just before the line saying whose turn it is.
+    """
     reserves = "   ".join(_describe_reserve(game, color) for color in Color)
-    return f"{reserves}\nTurn {game.turn_number}: {game.to_move} to move."
+    lines = [reserves]
+    if tak:
+        lines.append("Tak!")
+    lines.append(f"Turn {game.turn_number}: {game.to_move} to move.")
+    return "\n".join(lines)
 
 
 def describe_result(game: Game, result: GameResult) -> str:

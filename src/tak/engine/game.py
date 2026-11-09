@@ -5,13 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from tak.engine.board import BOARD_CONFIG, Board, Square
-from tak.engine.moves import Move, PlaceMove, SlideMove, legal_moves
+from tak.engine.moves import Move, PlaceMove, SlideMove, legal_moves, regular_moves
 from tak.engine.pieces import Color, Piece, PieceType
 from tak.engine.rules import (
     GameOverError,
     GameResult,
     IllegalMoveError,
     end_of_game,
+    find_road,
     slide_problem,
 )
 
@@ -93,6 +94,41 @@ class Game:
     def legal_moves(self) -> list[Move]:
         return legal_moves(self)
 
+    # --- Threats ("Tak") ------------------------------------------------------
+
+    def winning_move(self, color: Color) -> Move | None:
+        """A move that would win the game for ``color`` if they could move right now.
+
+        Whose turn it actually is doesn't matter: the question is "if ``color``
+        took a regular turn in the current position, could they win?" Any win
+        counts: a road (including when both roads are completed, since the
+        mover wins those), or ending the game ahead on flats by placing their
+        last piece or filling the board. Returns ``None`` if there is no such
+        move or the game is already over. The game itself is left unchanged.
+        """
+        if self.is_over:
+            return None
+        reserve = self.reserves[color]
+        for move in regular_moves(self.board, color, reserve):
+            board = self.board.copy()
+            reserves = dict(self.reserves)
+            if isinstance(move, PlaceMove):
+                board.set_stack(move.square, (Piece(color, move.piece),))
+                reserves[color] = _spend(reserve, move.piece)
+            else:
+                _slide_onto(board, move)
+            if _wins(board, color, reserves):
+                return move
+        return None
+
+    def threatens_win(self, color: Color) -> bool:
+        """True if ``color`` has a winning move available in the current position.
+
+        Asked about the player who just moved, this is whether their move
+        makes "Tak": a threat to win on their next turn.
+        """
+        return self.winning_move(color) is not None
+
     # --- Checking and playing moves -------------------------------------------
 
     def check(self, move: Move) -> None:
@@ -163,34 +199,56 @@ class Game:
     def _apply_place(self, move: PlaceMove, mover: Color) -> dict[Square, tuple[Piece, ...]]:
         # In the opening the piece belongs to the opponent and comes from their reserve.
         owner = mover.opponent if self.in_opening else mover
-        reserve = self.reserves[owner]
-        if move.piece is PieceType.CAP:
-            self.reserves[owner] = Reserve(reserve.stones, reserve.caps - 1)
-        else:
-            self.reserves[owner] = Reserve(reserve.stones - 1, reserve.caps)
+        self.reserves[owner] = _spend(self.reserves[owner], move.piece)
         previous = self.board.stack(move.square)
         self.board.set_stack(move.square, (Piece(owner, move.piece),))
         return {move.square: previous}
 
     def _apply_slide(self, move: SlideMove) -> tuple[dict[Square, tuple[Piece, ...]], bool]:
-        board = self.board
-        origin = board.stack(move.start)
-        carried = origin[-move.count :]
-        changes: dict[Square, tuple[Piece, ...]] = {move.start: origin}
-        board.set_stack(move.start, origin[: -move.count])
+        return _slide_onto(self.board, move)
 
-        flattened = False
-        used = 0
-        square = move.start
-        for take in move.drops:
-            square = square.step(move.direction)
-            existing = board.stack(square)
-            changes[square] = existing
-            if existing and existing[-1].type is PieceType.WALL:
-                # A capstone landing alone flattens the wall beneath it.
-                wall = existing[-1]
-                existing = (*existing[:-1], Piece(wall.color, PieceType.FLAT))
-                flattened = True
-            board.set_stack(square, existing + carried[used : used + take])
-            used += take
-        return changes, flattened
+
+def _spend(reserve: Reserve, piece: PieceType) -> Reserve:
+    """``reserve`` after one ``piece`` has been taken from it."""
+    if piece is PieceType.CAP:
+        return Reserve(reserve.stones, reserve.caps - 1)
+    return Reserve(reserve.stones - 1, reserve.caps)
+
+
+def _slide_onto(board: Board, move: SlideMove) -> tuple[dict[Square, tuple[Piece, ...]], bool]:
+    """Carry out a (legal) slide on ``board``.
+
+    Returns the stacks of every square touched, as they were before the move,
+    and whether a capstone flattened a wall.
+    """
+    origin = board.stack(move.start)
+    carried = origin[-move.count :]
+    changes: dict[Square, tuple[Piece, ...]] = {move.start: origin}
+    board.set_stack(move.start, origin[: -move.count])
+
+    flattened = False
+    used = 0
+    square = move.start
+    for take in move.drops:
+        square = square.step(move.direction)
+        existing = board.stack(square)
+        changes[square] = existing
+        if existing and existing[-1].type is PieceType.WALL:
+            # A capstone landing alone flattens the wall beneath it.
+            wall = existing[-1]
+            existing = (*existing[:-1], Piece(wall.color, PieceType.FLAT))
+            flattened = True
+        board.set_stack(square, existing + carried[used : used + take])
+        used += take
+    return changes, flattened
+
+
+def _wins(board: Board, color: Color, reserves: dict[Color, Reserve]) -> bool:
+    """Whether ``color`` has won, having just moved to reach this position."""
+    if find_road(board, color) is not None:
+        return True  # the mover wins even if the opponent also has a road
+    out_of_pieces = any(reserve.total == 0 for reserve in reserves.values())
+    if not (out_of_pieces or board.is_full()):
+        return False  # nothing ends the game, so there is no flat count
+    result = end_of_game(board, color, out_of_pieces)
+    return result is not None and result.winner is color

@@ -75,6 +75,12 @@ def test_status_omits_capstones_on_small_boards() -> None:
     assert "White: 10 stones" in status
 
 
+def test_status_announces_tak_just_before_the_turn_line() -> None:
+    lines = render_status(Game(3), tak=True).splitlines()
+    assert lines[1:] == ["Tak!", "Turn 1: White to move."]
+    assert "Tak!" not in render_status(Game(3))
+
+
 def test_status_tracks_turns(started: Callable[..., Game]) -> None:
     status = render_status(started("a1 e5 c3"))
     assert "Turn 2: Black to move." in status
