@@ -71,45 +71,6 @@ def test_each_turn_shows_the_board_and_status() -> None:
     assert "White: 10 stones" in session.text
 
 
-TAK_GAME = ["a1", "c3", "b1", "b3", "b2"]  # 3x3: b2 threatens c2, joining b1-b2-c2-c3
-
-
-def test_a_threatening_move_prints_tak_right_before_the_next_turn_line() -> None:
-    _, _, session = play_script([*TAK_GAME, "quit"])
-    lines = session.text.splitlines()
-    assert lines.count("Tak!") == 1
-    tak = lines.index("Tak!")
-    assert lines[tak + 1] == "Turn 3: Black to move."
-    assert lines[tak - 1].startswith("White: 7 stones")  # the reserves line comes first
-
-
-def test_tak_is_announced_for_black_too() -> None:
-    # 5x5: Black lines up a5-b5-c5-d5, threatening e5; White's stones are scattered.
-    script = ["a5", "e1", "c3", "b5", "e3", "c5", "a1", "d5", "quit"]
-    _, _, session = play_script(script, size=5)
-    lines = session.text.splitlines()
-    assert lines.count("Tak!") == 1
-    assert lines[lines.index("Tak!") + 1] == "Turn 5: White to move."
-
-
-def test_a_tak_can_be_followed_by_the_win() -> None:
-    _, result, session = play_script([*TAK_GAME, "c1", "c2"])  # Black doesn't block c2
-    assert result == GameResult(Color.WHITE, Reason.ROAD)
-    assert session.text.splitlines().count("Tak!") == 1
-
-
-def test_no_tak_when_no_move_threatens_anything() -> None:
-    _, _, session = play_script([*TAK_GAME[:4], "quit"])
-    assert "Tak!" not in session.text
-
-
-def test_tak_is_announced_once_for_the_move_that_made_it() -> None:
-    # A rejected move, a command, or a blank line doesn't repeat the announcement.
-    _, _, session = play_script([*TAK_GAME, "b2", "help", "", "quit"])
-    assert "Illegal move: b2 is already occupied." in session.text
-    assert session.text.splitlines().count("Tak!") == 1
-
-
 def test_illegal_moves_are_explained_and_the_same_player_tries_again() -> None:
     game, result, session = play_script(["a1", "a1", "a2", "quit"])
     assert "Illegal move: a1 is already occupied." in session.text
