@@ -162,6 +162,69 @@ class TestQuerying:
         assert game.result is not None and game.result.winner is Color.WHITE
 
 
+class TestTinue:
+    # 4x4: White has rows 2 and 3 up to the c-file, so d2 and d3 both win.
+    DOUBLE = {"a2": "w", "b2": "w", "c2": "w", "a3": "w", "b3": "w", "c3": "w"}
+
+    def test_a_single_threat_can_be_blocked(self, started: Started) -> None:
+        game = started("a1 c3 b1 b3 b2", size=3)  # only c2 wins, and Black can take it
+        assert game.threatens_win(Color.WHITE)
+        assert not game.is_tinue(Color.WHITE)
+
+    def test_two_threats_cannot_both_be_blocked(self) -> None:
+        game = position(4, {**self.DOUBLE, "d1": "b"})
+        assert game.is_tinue(Color.WHITE)
+
+    def test_one_slide_can_block_two_threats(self) -> None:
+        # With two stones on d1, Black can spread them over d2 and d3 (2d1+11).
+        game = position(4, {**self.DOUBLE, "d1": "b b"})
+        assert game.threatens_win(Color.WHITE)
+        assert not game.is_tinue(Color.WHITE)
+
+    def test_no_tinue_when_the_opponent_can_win_first(self) -> None:
+        # 3x3: White threatens c1, c3 and a2, but Black wins at once with c2.
+        stacks = {"a1": "w", "b1": "w", "a3": "w", "b3": "w", "a2": "b", "b2": "b"}
+        game = position(3, stacks)
+        assert game.threatens_win(Color.WHITE)
+        assert not game.is_tinue(Color.WHITE)
+
+    # Black has five flats to White's six; walls stop Black from threatening a road.
+    FLAT_RACE = {
+        **DOUBLE,
+        "a1": "b", "b1": "b", "c1": "b", "d1": "Sw",
+        "a4": "b", "b4": "b", "c4": "Sw",
+    }  # fmt: skip
+
+    def test_the_double_threat_in_the_flat_race(self) -> None:
+        assert position(4, self.FLAT_RACE).is_tinue(Color.WHITE)
+
+    def test_a_reply_that_ends_in_a_draw_escapes(self) -> None:
+        # Black's last piece ends the game level on flats, 6 to 6.
+        game = position(4, self.FLAT_RACE, black=(1, 0))
+        assert not game.is_tinue(Color.WHITE)
+
+    def test_a_reply_that_loses_on_the_spot_does_not_escape(self) -> None:
+        # Without c1, Black's last piece ends the game behind on flats, 5 to 6.
+        stacks = {k: v for k, v in self.FLAT_RACE.items() if k != "c1"}
+        game = position(4, stacks, black=(1, 0))
+        assert game.is_tinue(Color.WHITE)
+
+    def test_no_threat_means_no_tinue(self, started: Started) -> None:
+        game = started("a1 c3 b1 b3", size=3)
+        assert not game.threatens_win(Color.BLACK)
+        assert not game.is_tinue(Color.BLACK)
+
+    def test_no_tinue_once_the_game_is_over(self, started: Started) -> None:
+        game = started("a1 a2 b2 a3 c2", size=3)
+        assert not game.is_tinue(Color.WHITE)
+
+    def test_the_game_is_left_unchanged(self, snapshot: Snapshot) -> None:
+        game = position(4, {**self.DOUBLE, "d1": "b b"})
+        before = snapshot(game)
+        game.is_tinue(Color.WHITE)
+        assert snapshot(game) == before
+
+
 def random_positions(size: int, seed: int, max_plies: int) -> Iterator[Game]:
     rng = random.Random(seed * 7919 + size)
     game = Game(size)
@@ -184,3 +247,34 @@ def test_threats_agree_with_actually_playing_every_move(size: int, seed: int) ->
         assert (winner is not None) == expected
         if winner is not None:
             assert wins_when_played(game, mover, winner)
+
+
+def tinue_by_brute_force(game: Game, threatener: Color) -> bool:
+    """Tinue worked out with real moves only: the opponent is to move, and
+    after every reply the threatener has lost nothing, i.e. has already won or
+    has a move that wins."""
+    assert game.to_move is threatener.opponent
+    for reply in game.legal_moves():
+        game.play(reply)
+        try:
+            if game.result is not None:
+                if game.result.winner is not threatener:
+                    return False  # the opponent won or drew
+            elif not any(wins_when_played(game, threatener, move) for move in game.legal_moves()):
+                return False
+        finally:
+            game.undo()
+    return True
+
+
+@pytest.mark.parametrize("size", [3, 4])
+@pytest.mark.parametrize("seed", range(20))  # enough games to meet a dozen or so tinues
+def test_tinue_agrees_with_playing_out_every_reply(size: int, seed: int) -> None:
+    for game in random_positions(size, seed, max_plies=60):
+        if game.is_over or game.in_opening:
+            continue
+        threatener = game.to_move.opponent  # the player who just moved
+        if not game.threatens_win(threatener):
+            assert not game.is_tinue(threatener)
+            continue
+        assert game.is_tinue(threatener) == tinue_by_brute_force(game, threatener)

@@ -10,6 +10,7 @@ from tak.cli.render import LEGEND, describe_result, render_board, render_status
 from tak.engine.board import BOARD_CONFIG
 from tak.engine.game import Game
 from tak.engine.notation import NotationError, format_move, game_to_ptn, parse_move
+from tak.engine.pieces import Color
 from tak.engine.rules import GameResult, IllegalMoveError
 
 DEFAULT_SIZE = 5
@@ -34,6 +35,17 @@ def _prompt(game: Game) -> str:
     return f"{mover} > "
 
 
+def threat_call(game: Game, mover: Color) -> str | None:
+    """What to announce after ``mover``'s move: "Tinue!", "Tak!", or nothing.
+
+    "Tak!" means the move threatens to win next turn; "Tinue!" means the
+    opponent has no reply that stops it.
+    """
+    if not game.threatens_win(mover):
+        return None
+    return "Tinue!" if game.is_tinue(mover) else "Tak!"
+
+
 def run(
     game: Game,
     read: Callable[[str], str] = input,
@@ -43,14 +55,14 @@ def run(
     write(f"Tak on a {game.size}x{game.size} board. Type 'help' for how to enter moves.")
     write(LEGEND)
 
-    # Whether the move just played threatens to win next turn. It is announced
-    # once, in the status shown straight after that move.
-    tak = False
+    # "Tak!" or "Tinue!" if the move just played threatens to win next turn. It
+    # is announced once, in the status shown straight after that move.
+    call: str | None = None
     while game.result is None:
         write("")
         write(render_board(game.board))
-        write(render_status(game, tak=tak))
-        tak = False
+        write(render_status(game, call))
+        call = None
         try:
             line = read(_prompt(game)).strip()
         except EOFError:
@@ -85,7 +97,7 @@ def run(
             except IllegalMoveError as exc:
                 write(f"Illegal move: {exc}.")
             else:
-                tak = game.threatens_win(mover)
+                call = threat_call(game, mover)
 
     write("")
     write(render_board(game.board))
