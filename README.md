@@ -1,41 +1,45 @@
 # Tak
 
-A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the abstract strategy board game. The project includes a rules-complete game engine, a terminal interface for playing both sides, an optional graphical interface, and AI agents that can play either side.
+A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the abstract strategy board game. The project includes a rules-complete game engine and a terminal interface for playing both sides. A graphical interface and AI agents are planned; their packages are currently placeholders.
 
 ## Features
 
 - **Complete rules engine** for 3x3 through 8x8 boards: flat stones, walls, capstones, stack movement with carry limits, wall flattening, road wins, flat wins, and double-road handling
 - **Terminal play**: play both sides yourself from the command line
 - **Tak and Tinue calls**: after each move, terminal play announces "Tak!" when the move threatens to win next turn, or "Tinue!" when the opponent has no way to stop it
+- **PTN support**: read and write moves and games in Portable Tak Notation
+- **Tests** for the engine and the terminal interface
+
+Planned, not yet implemented:
+
 - **Optional GUI**: view the board and pieces and make moves graphically
 - **AI agents**: algorithms that play as one or both sides, built on the same engine
-- **PTN support**: read and write moves and games in Portable Tak Notation
-- **Tests** for every layer
 
 The full ruleset this project implements is in [`docs/rules.md`](docs/rules.md).
 
 ## Installation
 
-Requires Python 3.12
+Requires Python 3.10 or newer.
 
 ```bash
 git clone https://github.com/OrangeAed/Tak.git
-cd tak
+cd Tak
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
-pip install -e .                 # core engine, CLI, and AI
+pip install -e .                 # core engine and CLI
 pip install -e ".[dev]"          # adds pytest, ruff, mypy
-pip install -e ".[gui]"          # adds the GUI dependency
+pip install -e ".[gui]"          # adds pygame, for the planned GUI
 ```
 
 ## Usage
 
 ```bash
 python -m tak.cli                # play in the terminal
-python -m tak.gui                # launch the graphical interface (requires the gui extra)
-python scripts/play_match.py     # pit two AI agents against each other
+python -m tak.cli --size 6       # on another board size (3 to 8; the default is 5)
 ```
+
+`python -m tak.gui` (the graphical interface) and `python scripts/play_match.py` (pitting two AI agents against each other) are planned. They currently exit without doing anything.
 
 ## Tak and Tinue
 
@@ -61,9 +65,9 @@ game = Game(3)
 for move in "a1 c3 b1 b3 b2".split():
     game.play(parse_move(move))
 
-game.threatens_win(Color.WHITE)   # True: c2 would complete a road
-game.winning_move(Color.WHITE)    # the move placing a flat on c2 (None if no move wins)
-game.is_tinue(Color.WHITE)        # False: Black can block c2
+game.threatens_win(Color.WHITE)  # True: c2 would complete a road
+game.winning_move(Color.WHITE)  # the move placing a flat on c2 (None if no move wins)
+game.is_tinue(Color.WHITE)  # False: Black can block c2
 ```
 
 Spotting Tinue means trying every reply the opponent could make, so it costs more than spotting Tak. In typical games both checks together take a few milliseconds per move. Contrived 8x8 positions, where the opponent has thousands of possible replies, can take up to about a second.
@@ -71,16 +75,17 @@ Spotting Tinue means trying every reply the opponent could make, so it costs mor
 ## Project structure
 
 ```
-tak/
+Tak/
 ├── LICENSE
 ├── README.md
 ├── pyproject.toml            # packaging, dependencies, tool config (pytest, ruff, mypy)
 ├── .gitignore
 ├── .github/
 │   └── workflows/
-│       └── ci.yml            # runs tests and lint on every push
+│       └── ci.yml            # runs tests, lint, and type checks on every push
 ├── docs/
-│   └── rules.md              # the Tak rules this project implements
+│   ├── rules.md              # the Tak rules this project implements
+│   └── notation.md           # the move notation (PTN) this project reads and writes
 ├── src/
 │   └── tak/
 │       ├── __init__.py
@@ -95,10 +100,10 @@ tak/
 │       │   ├── __main__.py   # enables `python -m tak.cli`
 │       │   ├── render.py     # board and status -> text, including the Tak!/Tinue! line
 │       │   └── app.py        # input loop, parsing, error messages, Tak/Tinue calls
-│       ├── gui/              # optional graphical interface
+│       ├── gui/              # optional graphical interface (planned; placeholders)
 │       │   ├── __main__.py
 │       │   └── app.py
-│       └── ai/               # algorithms that play
+│       └── ai/               # algorithms that play (planned; placeholders)
 │           ├── base.py       # Agent interface: choose_move(game) -> Move
 │           ├── random_agent.py
 │           ├── evaluation.py # heuristics
@@ -107,8 +112,6 @@ tak/
 │   ├── conftest.py           # shared fixtures (e.g. board builders)
 │   ├── engine/
 │   ├── cli/
-│   ├── ai/
-│   ├── gui/
 │   └── threats/              # Tak and Tinue, from the engine through to the terminal
 │       ├── conftest.py                   # position builder, scripted terminal sessions
 │       ├── test_regular_moves.py         # move generation for either player
@@ -116,8 +119,9 @@ tak/
 │       ├── test_tinue_detection.py       # threats that can't be stopped
 │       ├── test_threat_announcements.py  # "Tak!" and "Tinue!" in the terminal
 │       └── test_road_search.py           # road search, which the checks run constantly
-└── scripts/
-    └── play_match.py         # pit two agents against each other
+├── scripts/
+│   └── play_match.py         # pit two agents against each other (planned; placeholder)
+└── saves/                    # local saved games and match output (contents ignored by git)
 ```
 
 ### Top-level files and folders
@@ -125,11 +129,12 @@ tak/
 | Path | Purpose |
 | ---- | ------- |
 | `pyproject.toml` | Single source of truth for packaging, dependencies (including the optional `gui` and `dev` extras), and tool configuration for pytest, ruff, and mypy |
-| `.github/workflows/ci.yml` | Continuous integration: runs the test suite, linter, and type checker on every push |
-| `docs/` | Project documentation, including the rules specification |
+| `.github/workflows/ci.yml` | Continuous integration: runs the test suite, linter, and type checker on every push and pull request |
+| `docs/` | Project documentation: the rules specification and the move notation |
 | `src/tak/` | The installable package; everything below is importable as `tak.<subpackage>` |
 | `tests/` | The test suite, laid out to mirror `src/tak/`, plus `tests/threats/` for Tak and Tinue |
 | `scripts/` | Standalone helper scripts that are not part of the installed package |
+| `saves/` | Local saved games and match output. Only the `.gitkeep` placeholder is committed |
 
 ### Packages
 
@@ -137,17 +142,17 @@ tak/
 
 **`tak.cli`: terminal play.** Renders the board as text and runs an input loop so a person can play both sides. After a threatening move it announces "Tak!" or "Tinue!". All rules, move validation, and threat detection come from the engine.
 
-**`tak.gui`: graphical play (optional).** Draws the board and pieces and turns clicks into moves. Its dependency is an optional extra, so the rest of the project does not require it.
+**`tak.gui`: graphical play (optional, planned).** Will draw the board and pieces and turn clicks into moves. Its dependency is an optional extra, so the rest of the project does not require it. Not implemented yet: the modules are placeholders.
 
-**`tak.ai`: computer players.** Every AI implements the `Agent` interface in `base.py`: given a game, return a move. Included agents start with a random baseline and build up to heuristic evaluation and minimax search.
+**`tak.ai`: computer players (planned).** Every AI will implement the `Agent` interface in `base.py`: given a game, return a move. The planned agents start with a random baseline and build up to heuristic evaluation and minimax search. Not implemented yet: the modules are placeholders.
 
 ## Design principles
 
 - **Dependencies point one way.** `cli`, `gui`, and `ai` depend on `engine`; `engine` depends on none of them. One rules implementation serves every interface.
-- **Everything that plays is an agent.** A human at the terminal, a GUI click handler, and an AI are all "something that returns a move for a given game." The game loop does not care who controls which side, so human vs. human, human vs. AI, and AI vs. AI all work with no special cases.
-- **Legal moves come from the engine.** The CLI, GUI, and AI all consume the same legal move list, so they can never disagree about what is allowed.
+- **Everything that plays is an agent.** The goal is for a human at the terminal, a GUI click handler, and an AI to all be "something that returns a move for a given game", so that the game loop does not care who controls which side and human vs. human, human vs. AI, and AI vs. AI all work with no special cases. Today the terminal loop reads moves for both sides directly; the `Agent` interface arrives with the AI.
+- **Legal moves come from the engine.** The CLI checks every move with the engine, and the GUI and AI are to use the same legal move list, so they can never disagree about what is allowed.
 - **`src/` layout.** Keeping the package under `src/` ensures tests run against the installed package rather than whatever happens to be in the working directory.
-- **Tests mirror the source tree.** The engine gets the heaviest testing, since road detection, wall flattening, and carry limits are common sources of bugs, and an AI built on a buggy engine learns the bugs. Tak and Tinue span the engine and the terminal, so their tests live together in `tests/threats/`. Alongside hand-built positions, they check the results against brute force that plays out every move with the real engine.
+- **Tests mirror the source tree.** Each package gets a matching folder under `tests/` (`ai/` and `gui/` will get theirs when they are implemented). The engine gets the heaviest testing, since road detection, wall flattening, and carry limits are common sources of bugs, and an AI built on a buggy engine learns the bugs. Tak and Tinue span the engine and the terminal, so their tests live together in `tests/threats/`. Alongside hand-built positions, they check the results against brute force that plays out every move with the real engine.
 
 ## Development
 
@@ -159,11 +164,11 @@ ruff format .                    # format
 mypy src                         # type check
 ```
 
-CI runs the same checks on every push, so running them locally before committing will save you a failed build.
+CI (`.github/workflows/ci.yml`) runs the tests, lint, and type check on Python 3.10 through 3.14 on every push and pull request, so running them locally before committing will save you a failed build.
 
 ## Notation
 
-Games and moves use [Portable Tak Notation (PTN)](https://ustak.org/portable-tak-notation/), the community standard. This makes it easy to save and replay games, write test cases from real positions, and interoperate with other Tak tools.
+Games and moves use [Portable Tak Notation (PTN)](https://ustak.org/portable-tak-notation/), the community standard. This makes it easy to save and replay games, write test cases from real positions, and interoperate with other Tak tools. [`docs/notation.md`](docs/notation.md) describes the subset and conventions this project implements.
 
 ## License
 
