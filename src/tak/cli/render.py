@@ -48,16 +48,16 @@ def _describe_reserve(game: Game, color: Color) -> str:
     return text
 
 
-def render_status(game: Game, tak: bool = False) -> str:
+def render_status(game: Game, call: str | None = None) -> str:
     """Reserves and whose turn it is.
 
-    With ``tak`` set, a "Tak!" line (announcing that the last move threatens
-    to win next turn) goes just before the line saying whose turn it is.
+    ``call`` is an announcement about the last move, such as "Tak!" or
+    "Tinue!"; it goes just before the line saying whose turn it is.
     """
     reserves = "   ".join(_describe_reserve(game, color) for color in Color)
     lines = [reserves]
-    if tak:
-        lines.append("Tak!")
+    if call:
+        lines.append(call)
     lines.append(f"Turn {game.turn_number}: {game.to_move} to move.")
     return "\n".join(lines)
 

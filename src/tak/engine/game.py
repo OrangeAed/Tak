@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 
 from tak.engine.board import BOARD_CONFIG, Board, Square
@@ -94,7 +95,7 @@ class Game:
     def legal_moves(self) -> list[Move]:
         return legal_moves(self)
 
-    # --- Threats ("Tak") ------------------------------------------------------
+    # --- Threats ("Tak" and "Tinue") --------------------------------------------
 
     def winning_move(self, color: Color) -> Move | None:
         """A move that would win the game for ``color`` if they could move right now.
@@ -108,18 +109,7 @@ class Game:
         """
         if self.is_over:
             return None
-        reserve = self.reserves[color]
-        for move in regular_moves(self.board, color, reserve):
-            board = self.board.copy()
-            reserves = dict(self.reserves)
-            if isinstance(move, PlaceMove):
-                board.set_stack(move.square, (Piece(color, move.piece),))
-                reserves[color] = _spend(reserve, move.piece)
-            else:
-                _slide_onto(board, move)
-            if _wins(board, color, reserves):
-                return move
-        return None
+        return next(_winning_moves(self.board, self.reserves, color), None)
 
     def threatens_win(self, color: Color) -> bool:
         """True if ``color`` has a winning move available in the current position.
@@ -128,6 +118,39 @@ class Game:
         makes "Tak": a threat to win on their next turn.
         """
         return self.winning_move(color) is not None
+
+    def is_tinue(self, color: Color) -> bool:
+        """True if ``color`` threatens a win that their opponent can't stop.
+
+        That is, ``color`` threatens to win (see :meth:`threatens_win`) and
+        whatever regular move the opponent makes in reply, ``color`` still has a
+        winning move afterwards, or the reply itself hands ``color`` the game
+        (say, by completing only ``color``'s road). A reply that wins the game
+        for the opponent or ends it in a draw does stop the threat. Asked
+        about the player who just moved, this is whether their move makes
+        "Tinue". The game itself is left unchanged.
+        """
+        if self.is_over:
+            return False
+        # Winning moves found so far. Most replies leave one of them intact, so
+        # trying these first saves searching every move after every reply.
+        known = list(_winning_moves(self.board, self.reserves, color))
+        if not known:
+            return False
+        opponent = color.opponent
+        for reply in regular_moves(self.board, opponent, self.reserves[opponent]):
+            board, reserves = _after(self.board, self.reserves, opponent, reply)
+            result = _result(board, opponent, reserves)
+            if result is not None:
+                if result.winner is color:
+                    continue  # the reply loses on the spot, so it stops nothing
+                return False  # the opponent wins or draws instead
+            answer = next(_winning_moves(board, reserves, color, first=known), None)
+            if answer is None:
+                return False  # this reply stops every win
+            if answer not in known:
+                known.append(answer)
+        return True
 
     # --- Checking and playing moves -------------------------------------------
 
@@ -243,7 +266,34 @@ def _slide_onto(board: Board, move: SlideMove) -> tuple[dict[Square, tuple[Piece
     return changes, flattened
 
 
-def _wins(board: Board, color: Color, reserves: dict[Color, Reserve]) -> bool:
+# --- Looking ahead (for spotting threats) --------------------------------------
+#
+# These work on a board and reserves rather than a Game, so they can explore
+# positions that never happen, like a player taking two turns in a row. They
+# only cover regular turns (not the opening) and never change their inputs.
+
+Reserves = dict[Color, Reserve]
+
+
+def _after(board: Board, reserves: Reserves, color: Color, move: Move) -> tuple[Board, Reserves]:
+    """The position after ``color`` makes ``move``, which must be legal."""
+    board = board.copy()
+    reserves = dict(reserves)
+    if isinstance(move, PlaceMove):
+        board.set_stack(move.square, (Piece(color, move.piece),))
+        reserves[color] = _spend(reserves[color], move.piece)
+    else:
+        _slide_onto(board, move)
+    return board, reserves
+
+
+def _result(board: Board, mover: Color, reserves: Reserves) -> GameResult | None:
+    """The result once ``mover`` has moved to reach this position, or ``None``."""
+    out_of_pieces = any(reserve.total == 0 for reserve in reserves.values())
+    return end_of_game(board, mover, out_of_pieces)
+
+
+def _wins(board: Board, color: Color, reserves: Reserves) -> bool:
     """Whether ``color`` has won, having just moved to reach this position."""
     if find_road(board, color) is not None:
         return True  # the mover wins even if the opponent also has a road
@@ -252,3 +302,36 @@ def _wins(board: Board, color: Color, reserves: dict[Color, Reserve]) -> bool:
         return False  # nothing ends the game, so there is no flat count
     result = end_of_game(board, color, out_of_pieces)
     return result is not None and result.winner is color
+
+
+def _is_legal(board: Board, reserves: Reserves, color: Color, move: Move) -> bool:
+    """Whether ``color`` could make ``move`` on a regular turn."""
+    if isinstance(move, SlideMove):
+        return slide_problem(board, color, move) is None
+    if not board.in_bounds(move.square) or board.stack(move.square):
+        return False
+    reserve = reserves[color]
+    return reserve.caps > 0 if move.piece is PieceType.CAP else reserve.stones > 0
+
+
+def _winning_moves(
+    board: Board, reserves: Reserves, color: Color, first: Iterable[Move] = ()
+) -> Iterator[Move]:
+    """Every move that would win for ``color`` right now.
+
+    Moves in ``first`` are tried before the rest (they may be reported twice).
+    Every move is only listed once the moves in ``first`` have been tried, so
+    a caller that stops at the first win often never needs the full list.
+    """
+    for move in first:
+        if _is_legal(board, reserves, color, move) and _wins_with(board, reserves, color, move):
+            yield move
+    for move in regular_moves(board, color, reserves[color]):
+        if _wins_with(board, reserves, color, move):
+            yield move
+
+
+def _wins_with(board: Board, reserves: Reserves, color: Color, move: Move) -> bool:
+    """Whether ``move`` (which must be legal) wins the game for ``color``."""
+    after_board, after_reserves = _after(board, reserves, color, move)
+    return _wins(after_board, color, after_reserves)
