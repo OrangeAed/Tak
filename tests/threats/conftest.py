@@ -10,7 +10,18 @@ from collections.abc import Callable, Iterator
 import pytest
 
 from tak.cli.app import run
-from tak.engine import Color, Game, GameResult, Move, Piece, PieceType, Reserve, Square
+from tak.engine import (
+    BOARD_CONFIG,
+    Color,
+    Game,
+    GameResult,
+    Move,
+    Piece,
+    PieceType,
+    PlaceMove,
+    Reserve,
+    Square,
+)
 
 Position = Callable[..., Game]
 WinsWhenPlayed = Callable[[Game, Color, Move], bool]
@@ -35,17 +46,31 @@ def position() -> Position:
 
     Stacks are written bottom first, using the board's labels (``w``, ``Sb``,
     ``Cw``, ...). Reserves start full; override them with e.g. ``white=(1, 0)``
-    for one stone and no capstones. No moves have been played.
+    for one stone and no capstones. The game is past the opening, with
+    ``to_move`` (White unless given) to play, so its moves can really be played.
     """
 
-    def make(size: int, stacks: dict[str, str], **reserves: tuple[int, int]) -> Game:
+    def make(
+        size: int,
+        stacks: dict[str, str],
+        to_move: Color = Color.WHITE,
+        **reserves: tuple[int, int],
+    ) -> Game:
         game = Game(size)
+        # A couple of throwaway placements get past the opening with the right
+        # player to move; then the board is cleared and laid out as asked.
+        squares = list(game.board.squares())
+        for square in squares[: 2 if to_move is Color.WHITE else 3]:
+            game.play(PlaceMove(square))
+        for square in squares:
+            game.board.set_stack(square, ())
         for name, labels in stacks.items():
             pieces = tuple(LABELS[label] for label in labels.split())
             game.board.set_stack(Square.from_name(name), pieces)
         for color in Color:
-            if color.value in reserves:
-                game.reserves[color] = Reserve(*reserves[color.value])
+            stones, caps = reserves.get(color.value, BOARD_CONFIG[size])
+            game.reserves[color] = Reserve(stones, caps)
+        assert game.to_move is to_move and not game.in_opening and not game.is_over
         return game
 
     return make

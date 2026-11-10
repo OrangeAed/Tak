@@ -113,6 +113,36 @@ class TestTinue:
         assert lines.count("Tinue!") == 1
 
 
+class TestBlocksThatOpenNewThreats:
+    """A reply that stops every threat but opens a new one."""
+
+    # 3x3: White's a1 threatens a2. Black's b2< would block a2 but uncover
+    # White's flat on b2, yet Black has safe blocks (a2, Sa2, 2b2<): Tak only.
+    TRAP_GAME = ["c2", "b2", "a3", "c2<", "a1"]
+
+    def test_a_trap_is_only_tak(self, play_script: PlayScript) -> None:
+        _, _, lines = play_script([*self.TRAP_GAME, "quit"])
+        assert calls_in(lines) == [("Tak!", "Turn 3: Black to move.")]
+
+    def test_falling_into_the_trap_loses(self, play_script: PlayScript) -> None:
+        _, result, lines = play_script([*self.TRAP_GAME, "b2<", "b2<"])
+        assert result == GameResult(Color.WHITE, Reason.ROAD)
+        assert [call for call, _ in calls_in(lines)] == ["Tak!"]
+
+    # 3x3: Black's c2 threatens row 2 and, by capturing c3, row 3. White's only
+    # way to stop both (c3-, capturing c2) leaves c3 empty for Black: Tinue.
+    TINUE_GAME = ["a3", "c2", "a1", "b3", "Sb1", "a2", "c2+", "c2"]
+
+    def test_when_the_only_block_backfires_it_is_tinue(self, play_script: PlayScript) -> None:
+        _, result, lines = play_script([*self.TINUE_GAME, "c3-", "c3"])
+        assert calls_in(lines) == [
+            ("Tak!", "Turn 3: White to move."),  # Black's b3 threatened c3
+            ("Tak!", "Turn 4: White to move."),  # Black's a2, and c3 is still open
+            ("Tinue!", "Turn 5: White to move."),
+        ]
+        assert result == GameResult(Color.BLACK, Reason.ROAD)
+
+
 def test_calls_in_the_real_program() -> None:
     """End to end through a real process, the way a person would run it."""
     completed = subprocess.run(
