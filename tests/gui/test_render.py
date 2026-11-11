@@ -1,7 +1,8 @@
-"""The pygame render: layout, the board and labels, pieces, and reserves."""
+"""The rendered frame: layout, drawing, occlusion, wood colors, and the panel."""
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
 import pygame
@@ -9,75 +10,98 @@ import pytest
 
 from tak.engine import BOARD_CONFIG, Color, Game, Piece, PieceType, Square
 from tak.gui import render
+from tak.gui.scene import FLAT_HEIGHT, Camera
+
+WHITE_FLAT = Piece(Color.WHITE, PieceType.FLAT)
+BLACK_FLAT = Piece(Color.BLACK, PieceType.FLAT)
 
 
-def frame(game: Game) -> pygame.Surface:
+def frame(game: Game, camera: Camera | None = None) -> tuple[pygame.Surface, render.View]:
     layout = render.layout_for(game.size)
     surface = pygame.Surface(layout.window_size)
-    render.draw_game(surface, game, layout, render.Fonts.default(), input_text="a1")
-    return surface
+    view = render.draw_game(
+        surface, game, layout, render.Fonts.default(), camera=camera, input_text="a1"
+    )
+    return surface, view
 
 
-def colors_used(surface: pygame.Surface) -> set[tuple[int, int, int]]:
-    width, height = surface.get_size()
-    return {surface.get_at((x, y))[:3] for x in range(0, width, 4) for y in range(0, height, 4)}
+def color_on(game: Game, name: str, z: float, camera: Camera | None = None) -> tuple[int, ...]:
+    """The pixel color where a point above the middle of a square is drawn."""
+    surface, view = frame(game, camera)
+    layout = render.layout_for(game.size)
+    return tuple(surface.get_at(render.square_center(view, layout, Square.from_name(name), z)))[:3]
+
+
+def brightness(color: tuple[int, ...]) -> float:
+    return sum(color) / 3
 
 
 class TestLayout:
     @pytest.mark.parametrize("size", sorted(BOARD_CONFIG))
-    def test_window_fits_board_labels_and_panel(self, size: int) -> None:
+    def test_viewport_and_panel_fit_the_window(self, size: int) -> None:
         layout = render.layout_for(size)
-        width, height = layout.window_size
-        assert layout.board_rect.width == layout.board_rect.height == size * layout.square
-        assert layout.board_rect.left == layout.margin  # room for rank numbers
-        assert layout.board_rect.bottom + layout.margin <= height  # room for file letters
-        assert layout.panel_rect.left >= layout.board_rect.right
-        assert layout.panel_rect.right <= width
-
-    def test_a1_is_bottom_left_and_ranks_go_up(self) -> None:
-        layout = render.layout_for(5)
-        a1 = layout.square_rect(Square.from_name("a1"))
-        a2 = layout.square_rect(Square.from_name("a2"))
-        e1 = layout.square_rect(Square.from_name("e1"))
-        assert a1.bottom == layout.board_rect.bottom and a1.left == layout.board_rect.left
-        assert a2.bottom == a1.top  # rank 2 sits above rank 1
-        assert e1.right == layout.board_rect.right and e1.left > a1.left
+        window = pygame.Rect((0, 0), layout.window_size)
+        assert window.contains(layout.viewport)
+        assert window.contains(layout.panel_rect)
+        assert not layout.viewport.colliderect(layout.panel_rect)
 
 
 class TestDrawing:
     @pytest.mark.parametrize("size", sorted(BOARD_CONFIG))
     def test_draws_every_size_without_error(self, size: int) -> None:
-        assert colors_used(frame(Game(size)))  # and doesn't crash
+        frame(Game(size))
 
-    def test_empty_board_shows_both_square_colors(self) -> None:
-        used = colors_used(frame(Game(5)))
-        assert render.BOARD_LIGHT in used
-        assert render.BOARD_DARK in used
-
-    def test_pieces_of_both_colors_are_visible_and_distinct(
-        self, started: Callable[..., Game]
-    ) -> None:
-        used = colors_used(frame(started("a1 e5 b2 d4")))
-        assert render.WHITE_FILL in used
-        assert render.BLACK_FILL in used
-
-    def test_piece_types_draw_differently(self) -> None:
-        side = 40
-        surfaces = []
-        for piece_type in PieceType:
-            surface = pygame.Surface((side, side))
-            surface.fill(render.BOARD_LIGHT)
-            render.draw_piece(surface, Piece(Color.WHITE, piece_type), pygame.Rect(4, 4, 32, 32))
-            surfaces.append(pygame.image.tobytes(surface, "RGB"))
-        assert len(set(surfaces)) == len(PieceType)
-
-    def test_tall_stack_stays_inside_its_square(self) -> None:
+    @pytest.mark.parametrize("yaw", [0.0, 1.0, 2.5, math.pi, 5.0])
+    def test_draws_from_any_angle(self, yaw: float) -> None:
         game = Game(5)
-        stack = tuple(Piece(Color.WHITE, PieceType.FLAT) for _ in range(9)) + (
-            Piece(Color.BLACK, PieceType.CAP),
-        )
-        game.board.set_stack(Square.from_name("c3"), stack)
-        frame(game)  # must not raise, even squeezed
+        game.board.set_stack(Square.from_name("c3"), (WHITE_FLAT, BLACK_FLAT) * 6)
+        frame(game, Camera(yaw=yaw, pitch=0.4))
+
+    def test_light_pieces_are_light_wood_and_dark_pieces_dark_wood(self) -> None:
+        game = Game(5)
+        game.board.set_stack(Square.from_name("b2"), (WHITE_FLAT,))
+        game.board.set_stack(Square.from_name("d4"), (BLACK_FLAT,))
+        light = color_on(game, "b2", FLAT_HEIGHT)
+        dark = color_on(game, "d4", FLAT_HEIGHT)
+        assert brightness(light) > 170 > 110 > brightness(dark)
+        for r, g, b in (light, dark):
+            assert r > g > b  # wood, not black and white
+
+    def test_pieces_stand_out_from_the_board(self) -> None:
+        game = Game(5)
+        board_color = color_on(game, "b2", 0.0)
+        game.board.set_stack(Square.from_name("b2"), (WHITE_FLAT,))
+        game.board.set_stack(Square.from_name("c2"), (BLACK_FLAT,))
+        assert brightness(color_on(game, "b2", FLAT_HEIGHT)) > brightness(board_color) + 30
+        assert brightness(color_on(game, "c2", FLAT_HEIGHT)) < brightness(board_color) - 40
+
+    def test_a_tall_stack_in_front_hides_what_is_behind_it(self) -> None:
+        # From White's side, c2 is in front of c3. A tall light stack on c2
+        # must cover the dark flat on c3, however they are drawn.
+        game = Game(5)
+        game.board.set_stack(Square.from_name("c2"), (WHITE_FLAT,) * 25)
+        game.board.set_stack(Square.from_name("c3"), (BLACK_FLAT,))
+        # (The pixel falls on the stack's shaded side, so it is dimmer than a lit top,
+        # but still far brighter than walnut ever gets.)
+        assert brightness(color_on(game, "c3", FLAT_HEIGHT)) > 125
+        # And from Black's side c3 is in front, so the dark flat is visible.
+        assert brightness(color_on(game, "c3", FLAT_HEIGHT, Camera().flipped())) < 110
+
+    def test_piece_types_look_different(self) -> None:
+        images = set()
+        for piece_type in PieceType:
+            game = Game(5)
+            game.board.set_stack(Square.from_name("c3"), (Piece(Color.WHITE, piece_type),))
+            surface, _ = frame(game)
+            images.add(pygame.image.tobytes(surface, "RGB"))
+        assert len(images) == len(PieceType)
+
+    @pytest.mark.parametrize("color", list(Color))
+    @pytest.mark.parametrize("piece_type", [PieceType.FLAT, PieceType.CAP])
+    def test_reserve_icons(self, color: Color, piece_type: PieceType) -> None:
+        icon = render.piece_icon(color, piece_type, 40)
+        assert icon.get_size() == (40, 40)
+        assert icon.get_at((20, 20)).a > 0  # something is drawn in the middle
 
 
 class TestPanel:

@@ -1,9 +1,11 @@
-"""The graphical game window: a pygame render of the board, reserves, and labels.
+"""The graphical game window: a 3D pygame render of the board, reserves, and labels.
 
 Run it with ``tak-gui`` or ``python -m tak.gui``, with ``--size`` choosing the
-board (3 to 8). The window shows the board with ranks and files labelled, every
-stack on it, and both players' remaining pieces. Moves are typed in PTN, just
-like the terminal interface, into the input line at the bottom of the panel.
+board (3 to 8). The window shows the board in 3D with ranks and files labelled,
+every stack on it built up piece by piece, and both players' remaining pieces.
+Drag with the mouse or hold the arrow keys to turn and tilt the board, scroll
+to zoom, Tab to look from the other side, and Home to reset the view. Moves are
+typed in PTN, just like the terminal interface, into the input line in the panel.
 
 All rules come from the engine; this module only draws and collects input.
 """
@@ -50,11 +52,17 @@ def submit_move(game: Game, text: str) -> tuple[str, str] | None:
     return (GOOD, call) if call else None
 
 
+#: How fast the board turns: radians per pixel dragged, and per second a key is held.
+DRAG_SPEED = 0.008
+KEY_SPEED = 1.6
+
+
 def run(game: Game) -> None:
     """Open the window and play ``game`` until it ends or the window is closed."""
     import pygame
 
     from tak.gui import render
+    from tak.gui.scene import Camera
 
     pygame.init()
     layout = render.layout_for(game.size)
@@ -66,12 +74,25 @@ def run(game: Game) -> None:
     colors = {INFO: render.TEXT, GOOD: render.ACCENT, BAD: render.ERROR}
     typed = ""
     message: tuple[str, str] | None = None
+    camera = Camera()
+    dragging = False
+    dirty = True  # a 3D frame is costly, so only redraw when something changed
 
     running = True
     while running:
+        seconds = clock.tick(60) / 1000
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                dragging = layout.viewport.collidepoint(event.pos)
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                dragging = False
+            elif event.type == pygame.MOUSEMOTION and dragging:
+                dx, dy = event.rel
+                camera = camera.orbit(-dx * DRAG_SPEED, dy * DRAG_SPEED)
+            elif event.type == pygame.MOUSEWHEEL:
+                camera = camera.zoomed(1.1**event.y)
             elif event.type == pygame.KEYDOWN:
                 ctrl = event.mod & pygame.KMOD_CTRL
                 if ctrl and event.key == pygame.K_q:
@@ -81,6 +102,10 @@ def run(game: Game) -> None:
                         message = INFO, f"Took back {format_move(game.undo())}."
                     else:
                         message = BAD, "There is nothing to undo."
+                elif event.key == pygame.K_TAB:
+                    camera = camera.flipped()
+                elif event.key == pygame.K_HOME:
+                    camera = Camera()
                 elif event.key == pygame.K_ESCAPE:
                     typed = ""
                 elif event.key == pygame.K_BACKSPACE:
@@ -91,18 +116,31 @@ def run(game: Game) -> None:
                     typed = ""
                 elif event.unicode and event.unicode.isprintable() and not ctrl:
                     typed += event.unicode
+            else:
+                continue  # nothing that changes the picture
+            dirty = True
 
-        render.draw_game(
-            screen,
-            game,
-            layout,
-            fonts,
-            message=message[1] if message else None,
-            message_color=colors[message[0]] if message else render.TEXT,
-            input_text=None if game.is_over else typed,
-        )
-        pygame.display.flip()
-        clock.tick(30)
+        # Held arrow keys turn (left/right) and tilt (up/down) the board smoothly.
+        held = pygame.key.get_pressed()
+        turn = held[pygame.K_LEFT] - held[pygame.K_RIGHT]
+        tilt = held[pygame.K_UP] - held[pygame.K_DOWN]
+        if turn or tilt:
+            camera = camera.orbit(turn * KEY_SPEED * seconds, tilt * KEY_SPEED * seconds)
+            dirty = True
+
+        if dirty:
+            render.draw_game(
+                screen,
+                game,
+                layout,
+                fonts,
+                camera=camera,
+                message=message[1] if message else None,
+                message_color=colors[message[0]] if message else render.TEXT,
+                input_text=None if game.is_over else typed,
+            )
+            pygame.display.flip()
+            dirty = False
 
     pygame.quit()
 

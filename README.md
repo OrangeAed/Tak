@@ -6,7 +6,7 @@ A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the 
 
 - **Complete rules engine** for 3x3 through 8x8 boards: flat stones, walls, capstones, stack movement with carry limits, wall flattening, road wins, flat wins, and double-road handling
 - **Terminal play**: play both sides yourself from the command line
-- **Graphical play (optional)**: a pygame window showing the board with ranks and files labelled, every stack, and both players' reserves; type PTN moves to play both sides
+- **Graphical play (optional)**: a 3D pygame view of the board you can turn and tilt, with ranks and files labelled, wooden pieces stacked layer by layer, and both players' reserves; type PTN moves to play both sides
 - **Tak and Tinue calls**: after each move, terminal play announces "Tak!" when the move threatens to win next turn, or "Tinue!" when the opponent has no way to stop it
 - **PTN support**: read and write moves and games in Portable Tak Notation
 - **Tests** for the engine and the terminal interface
@@ -43,7 +43,16 @@ tak-gui --size 6                 # on another board size (3 to 8; the default is
 python -m tak.gui --size 6       # the same, without the console script
 ```
 
-In the window, type a PTN move and press Enter to play it; Ctrl+Z takes a move back, Esc clears the input line, and Ctrl+Q quits. White pieces are light with a dark outline and black pieces are dark with a light outline; flat stones are square tiles, walls are diagonal bars, and capstones are circles. Buried stones show as thin slabs under the top piece, and taller stacks get a height badge.
+The window shows the board in 3D. White plays light maple and Black dark walnut; flat stones are low octagonal tiles, walls are tiles standing on edge, and capstones are tall bevelled drums. Stacks are built up layer by layer so you can read them from the side, and each stack of two or more has a tag with its height. Ranks and files are marked on all four sides of the frame.
+
+| Control | Action |
+| ------- | ------ |
+| Type a PTN move, then Enter | Play the move |
+| Drag with the left mouse button, or hold the arrow keys | Turn (left/right) and tilt (up/down) the board |
+| Mouse wheel | Zoom |
+| Tab | Look from the other player's side |
+| Home | Reset the view |
+| Ctrl+Z / Esc / Ctrl+Q | Undo / clear the input line / quit |
 
 `python scripts/play_match.py` (pitting two AI agents against each other) is planned. It currently exits without doing anything.
 
@@ -108,7 +117,8 @@ Tak/
 │       │   └── app.py        # input loop, parsing, error messages, Tak/Tinue calls
 │       ├── gui/              # optional graphical interface (pygame)
 │       │   ├── __main__.py   # enables `python -m tak.gui`
-│       │   ├── render.py     # game state -> pixels: board, labels, stacks, reserves
+│       │   ├── scene.py      # small 3D renderer: camera, projection, wooden meshes, draw order
+│       │   ├── render.py     # game state -> frame: 3D board, labels, stacks, reserves panel
 │       │   └── app.py        # window, event loop, PTN input, size argument
 │       └── ai/               # algorithms that play (planned; placeholders)
 │           ├── base.py       # Agent interface: choose_move(game) -> Move
@@ -119,7 +129,7 @@ Tak/
 │   ├── conftest.py           # shared fixtures (e.g. board builders)
 │   ├── engine/
 │   ├── cli/
-│   ├── gui/                  # layout, drawing, and the size argument (headless pygame)
+│   ├── gui/                  # projection, draw order, occlusion, colors, controls (headless pygame)
 │   └── threats/              # Tak and Tinue, from the engine through to the terminal
 │       ├── conftest.py                   # position builder, scripted terminal sessions
 │       ├── test_regular_moves.py         # move generation for either player
@@ -150,7 +160,7 @@ Tak/
 
 **`tak.cli`: terminal play.** Renders the board as text and runs an input loop so a person can play both sides. After a threatening move it announces "Tak!" or "Tinue!". All rules, move validation, and threat detection come from the engine.
 
-**`tak.gui`: graphical play (optional).** Draws the board with rank and file labels, every stack, and both players' reserves in a pygame window; moves are typed in PTN, just as in the terminal. Its dependency is an optional extra (`pip install -e ".[gui]"`), so the rest of the project does not require it. Start it with `tak-gui` or `python -m tak.gui`.
+**`tak.gui`: graphical play (optional).** Draws the board in 3D in a pygame window, with rank and file labels, every stack built up piece by piece, and both players' reserves; the view can be turned, tilted, and zoomed. pygame only draws 2D shapes, so `scene.py` does the 3D itself (perspective projection, shading, and back-to-front painting), with no other dependencies. Moves are typed in PTN, just as in the terminal. Its dependency is an optional extra (`pip install -e ".[gui]"`), so the rest of the project does not require it. Start it with `tak-gui` or `python -m tak.gui`.
 
 **`tak.ai`: computer players (planned).** Every AI will implement the `Agent` interface in `base.py`: given a game, return a move. The planned agents start with a random baseline and build up to heuristic evaluation and minimax search. Not implemented yet: the modules are placeholders.
 
