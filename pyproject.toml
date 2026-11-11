@@ -15,6 +15,10 @@ classifiers = [
     "Topic :: Games/Entertainment :: Board Games",
 ]
 
+[project.scripts]
+# Needs the gui extra: pip install -e ".[gui]"
+tak-gui = "tak.gui.app:main"
+
 [project.optional-dependencies]
 gui = [
     "pygame>=2.5",
@@ -32,7 +36,7 @@ packages = ["src/tak"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers --import-mode=importlib"
 
 [tool.ruff]
 line-length = 100
