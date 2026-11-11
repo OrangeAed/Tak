@@ -345,10 +345,15 @@ def draw_panel(
 
 
 def _wrap(text: str, font: pygame.font.Font, width: int) -> list[str]:
-    """Greedy word wrap by rendered pixel width."""
+    """Greedy word wrap by rendered pixel width.
+
+    A word too wide for a line on its own (such as a file path) is broken up,
+    after a ``/``, ``_`` or ``-`` where possible.
+    """
     lines: list[str] = []
     current = ""
-    for word in text.split():
+    words = [piece for word in text.split() for piece in _split_long(word, font, width)]
+    for word in words:
         candidate = f"{current} {word}".strip()
         if current and font.size(candidate)[0] > width:
             lines.append(current)
@@ -358,6 +363,20 @@ def _wrap(text: str, font: pygame.font.Font, width: int) -> list[str]:
     if current:
         lines.append(current)
     return lines
+
+
+def _split_long(word: str, font: pygame.font.Font, width: int) -> list[str]:
+    """``word`` cut into pieces that each fit in ``width`` pixels."""
+    pieces = []
+    while font.size(word)[0] > width and len(word) > 1:
+        fit = 1
+        while fit < len(word) and font.size(word[: fit + 1])[0] <= width:
+            fit += 1
+        breaks = [i + 1 for i in range(fit) if word[i] in "/_-"]
+        cut = breaks[-1] if breaks else fit
+        pieces.append(word[:cut])
+        word = word[cut:]
+    return [*pieces, word]
 
 
 # --- Everything --------------------------------------------------------------------

@@ -5,11 +5,12 @@ from __future__ import annotations
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
 from tak.cli.app import main, run
-from tak.engine import Color, Game, GameResult, Piece, PieceType, Reason, Square
+from tak.engine import Color, Game, GameResult, Piece, PieceType, Reason, Square, game_from_ptn
 
 ROAD_GAME = ["a1", "a2", "b2", "a3", "c2"]  # on a 3x3 board: White wins with a2-b2-c2
 
@@ -195,8 +196,61 @@ def test_running_the_module_as_a_script(tmp_path: object) -> None:
     assert completed.returncode == 0, completed.stderr
     assert "White wins with a road" in completed.stdout
     assert "Result: R-0" in completed.stdout
+    assert "Game saved to" in completed.stdout
 
 
 def test_reader_type_matches_input() -> None:
     reader: Callable[[str], str] = input
     assert callable(reader)
+
+
+class TestSaving:
+    def saved(self, folder: Path) -> list[Path]:
+        return sorted(folder.glob("*.ptn"))
+
+    def test_a_finished_game_is_saved_as_ptn(self, saves_dir: Path) -> None:
+        session = Session(ROAD_GAME)
+        assert main(["--size", "3"], session.read, session.write) == 0
+        [path] = self.saved(saves_dir)
+        assert path.name.endswith("_3x3_white-road.ptn")
+        assert f"Game saved to {path}" in session.output
+        loaded = game_from_ptn(path.read_text(encoding="utf-8"))
+        assert loaded.result == GameResult(Color.WHITE, Reason.ROAD)
+        assert loaded.ply == len(ROAD_GAME)
+
+    def test_each_game_gets_its_own_file(self, saves_dir: Path) -> None:
+        for _ in range(3):
+            session = Session(ROAD_GAME)
+            main(["--size", "3"], session.read, session.write)
+        assert len(self.saved(saves_dir)) == 3
+
+    def test_saves_dir_option(self, saves_dir: Path, tmp_path: Path) -> None:
+        folder = tmp_path / "my games"
+        session = Session(ROAD_GAME)
+        main(["--size", "3", "--saves-dir", str(folder)], session.read, session.write)
+        assert len(self.saved(folder)) == 1
+        assert self.saved(saves_dir) == []
+
+    def test_no_save_option(self, saves_dir: Path) -> None:
+        session = Session(ROAD_GAME)
+        main(["--size", "3", "--no-save"], session.read, session.write)
+        assert self.saved(saves_dir) == []
+        assert "saved" not in session.text
+
+    def test_unfinished_games_are_not_saved(self, saves_dir: Path) -> None:
+        for lines in (["a1", "quit"], ["a1"]):  # quitting, and input running out
+            session = Session(lines)
+            main(["--size", "3"], session.read, session.write)
+        assert self.saved(saves_dir) == []
+
+    def test_a_save_that_fails_does_not_crash_the_game(self, tmp_path: Path) -> None:
+        blocker = tmp_path / "not-a-folder"
+        blocker.write_text("", encoding="utf-8")
+        session = Session(ROAD_GAME)
+        assert main(["--size", "3", "--saves-dir", str(blocker)], session.read, session.write) == 0
+        assert "Result: R-0" in session.text
+        assert "Could not save the game" in session.text
+
+    def test_run_alone_does_not_save(self, saves_dir: Path) -> None:
+        play_script(ROAD_GAME)
+        assert self.saved(saves_dir) == []

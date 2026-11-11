@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import textwrap
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 from tak.cli.render import LEGEND, describe_result, render_board, render_status
 from tak.engine.board import BOARD_CONFIG
@@ -12,6 +13,7 @@ from tak.engine.game import Game
 from tak.engine.notation import NotationError, format_move, game_to_ptn, parse_move
 from tak.engine.pieces import Color
 from tak.engine.rules import GameResult, IllegalMoveError
+from tak.saves import add_save_arguments, save_finished_game, saves_dir_from
 
 DEFAULT_SIZE = 5
 
@@ -50,8 +52,13 @@ def run(
     game: Game,
     read: Callable[[str], str] = input,
     write: Callable[[str], None] = print,
+    save_dir: Path | None = None,
 ) -> GameResult | None:
-    """Play ``game`` until someone wins. Returns the result, or ``None`` if play was abandoned."""
+    """Play ``game`` until someone wins. Returns the result, or ``None`` if play was abandoned.
+
+    If ``save_dir`` is given, a finished game is saved there as a new PTN file.
+    Abandoned games are not saved.
+    """
     write(f"Tak on a {game.size}x{game.size} board. Type 'help' for how to enter moves.")
     write(LEGEND)
 
@@ -104,6 +111,8 @@ def run(
     write("")
     write(f"Game over, {describe_result(game, game.result)}")
     write(f"Result: {game.result.ptn}")
+    if save_dir is not None:
+        write(save_finished_game(game, save_dir)[1])
     return game.result
 
 
@@ -124,9 +133,10 @@ def main(
         default=DEFAULT_SIZE,
         help=f"board size (default: {DEFAULT_SIZE})",
     )
+    add_save_arguments(parser)
     args = parser.parse_args(argv)
     try:
-        run(Game(args.size), read, write)
+        run(Game(args.size), read, write, save_dir=saves_dir_from(args))
     except KeyboardInterrupt:
         write("")
         write("Game abandoned.")

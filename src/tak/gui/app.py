@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from pathlib import Path
 
 from tak.engine.board import BOARD_CONFIG
 from tak.engine.game import Game
 from tak.engine.notation import NotationError, format_move, parse_move
 from tak.engine.pieces import Color
 from tak.engine.rules import IllegalMoveError
+from tak.saves import add_save_arguments, save_finished_game, saves_dir_from
 
 DEFAULT_SIZE = 5
 
@@ -57,8 +59,34 @@ DRAG_SPEED = 0.008
 KEY_SPEED = 1.6
 
 
-def run(game: Game) -> None:
-    """Open the window and play ``game`` until it ends or the window is closed."""
+class GameRecorder:
+    """Saves the game each time it ends, keeping to one file per game.
+
+    The window allows undo even after the game is over. If the game is then
+    finished again, the file saved the first time is rewritten with the new
+    ending instead of a second file being made.
+    """
+
+    def __init__(self, save_dir: Path | None) -> None:
+        self.save_dir = save_dir
+        self.path: Path | None = None
+
+    def after_move(self, game: Game) -> tuple[str, str] | None:
+        """Save if ``game`` just ended; return a ``(kind, message)`` to show, if any."""
+        if not game.is_over or self.save_dir is None:
+            return None
+        path, message = save_finished_game(game, self.save_dir, replace=self.path)
+        if path is None:
+            return BAD, message
+        self.path = path
+        return INFO, message
+
+
+def run(game: Game, save_dir: Path | None = None) -> None:
+    """Open the window and play ``game`` until it ends or the window is closed.
+
+    If ``save_dir`` is given, the game is saved there as PTN when it ends.
+    """
     import pygame
 
     from tak.gui import render
@@ -75,6 +103,7 @@ def run(game: Game) -> None:
     typed = ""
     message: tuple[str, str] | None = None
     camera = Camera()
+    recorder = GameRecorder(save_dir)
     dragging = False
     dirty = True  # a 3D frame is costly, so only redraw when something changed
 
@@ -113,6 +142,7 @@ def run(game: Game) -> None:
                 elif event.key == pygame.K_RETURN:
                     if typed.strip():
                         message = submit_move(game, typed.strip())
+                        message = recorder.after_move(game) or message
                     typed = ""
                 elif event.unicode and event.unicode.isprintable() and not ctrl:
                     typed += event.unicode
@@ -158,11 +188,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=DEFAULT_SIZE,
         help=f"board size (default: {DEFAULT_SIZE})",
     )
+    add_save_arguments(parser)
     args = parser.parse_args(argv)
     try:
         import pygame  # noqa: F401
     except ImportError:
         print("The GUI needs pygame. Install it with: pip install -e '.[gui]'")
         return 1
-    run(Game(args.size))
+    run(Game(args.size), save_dir=saves_dir_from(args))
     return 0

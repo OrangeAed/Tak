@@ -9,6 +9,7 @@ A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the 
 - **Graphical play (optional)**: a 3D pygame view of the board you can turn and tilt, with ranks and files labelled, wooden pieces stacked layer by layer, and both players' reserves; type PTN moves to play both sides
 - **Tak and Tinue calls**: after each move, terminal play announces "Tak!" when the move threatens to win next turn, or "Tinue!" when the opponent has no way to stop it
 - **PTN support**: read and write moves and games in Portable Tak Notation
+- **Saved games**: every finished game, in the terminal or the window, is saved as a PTN file in `saves/`
 - **Tests** for the engine and the terminal interface
 
 Planned, not yet implemented:
@@ -55,6 +56,29 @@ The window shows the board in 3D. White plays light maple and Black dark walnut;
 | Ctrl+Z / Esc / Ctrl+Q | Undo / clear the input line / quit |
 
 `python scripts/play_match.py` (pitting two AI agents against each other) is planned. It currently exits without doing anything.
+
+## Saved games
+
+When a game ends, in the terminal or in the window, it is saved automatically as a new PTN file in the project's `saves/` folder, and the program says where:
+
+```
+Game over, White wins with a road: a2 -> b2 -> c2
+Result: R-0
+Game saved to saves/2026-11-09_14-03-22_3x3_white-road.ptn
+```
+
+Files are named after when the game finished, the board size, and the outcome (`white-road`, `black-flats`, `draw`, ...). An existing save is never overwritten: a second game in the same second gets `-2` added to its name. In the window you can still undo after the game ends; if you then finish the game again, its file is updated with the new ending rather than a second file being made. Games you quit before the end are not saved.
+
+The files are standard PTN with `Size`, `Date`, `Time`, and `Result` headers, so they load back into the engine (or any other Tak tool):
+
+```python
+from pathlib import Path
+from tak.engine import game_from_ptn
+
+game = game_from_ptn(Path("saves/2026-11-09_14-03-22_3x3_white-road.ptn").read_text())
+```
+
+Both commands accept `--saves-dir DIR` to save somewhere else and `--no-save` to not save at all. The `TAK_SAVES_DIR` environment variable also changes the folder (the test suite uses it so tests never write into `saves/`).
 
 ## Tak and Tinue
 
@@ -104,6 +128,7 @@ Tak/
 ├── src/
 │   └── tak/
 │       ├── __init__.py
+│       ├── saves.py          # save finished games as PTN files in saves/ (shared by cli and gui)
 │       ├── engine/           # game simulation (pure logic, no I/O)
 │       │   ├── pieces.py     # PieceType, Color, Piece
 │       │   ├── board.py      # Board, stacks, size and reserve config table
@@ -126,7 +151,8 @@ Tak/
 │           ├── evaluation.py # heuristics
 │           └── minimax.py    # search
 ├── tests/                    # mirrors src/tak, plus threats/ for Tak and Tinue
-│   ├── conftest.py           # shared fixtures (e.g. board builders)
+│   ├── conftest.py           # shared fixtures (e.g. board builders); keeps saves out of saves/
+│   ├── test_saves.py         # file names, never overwriting, round trips, save options
 │   ├── engine/
 │   ├── cli/
 │   ├── gui/                  # projection, draw order, occlusion, colors, controls (headless pygame)
@@ -157,6 +183,8 @@ Tak/
 ### Packages
 
 **`tak.engine`: the rules.** This is the heart of the project. It contains the board, pieces, legal move generation, win detection, game state, and threat detection: whether a player threatens to win next turn (Tak), and whether that threat can be stopped (Tinue). It does no printing, input, or drawing, so it can be driven by any front end or algorithm.
+
+**`tak.saves`: saved games.** Writes a finished game as a new PTN file in `saves/` and provides the `--saves-dir` and `--no-save` options. It does file I/O, so it sits beside the engine rather than in it, and both front ends use it.
 
 **`tak.cli`: terminal play.** Renders the board as text and runs an input loop so a person can play both sides. After a threatening move it announces "Tak!" or "Tinue!". All rules, move validation, and threat detection come from the engine.
 

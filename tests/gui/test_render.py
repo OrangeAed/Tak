@@ -118,3 +118,11 @@ class TestPanel:
         lines = render._wrap(text, font, 120)
         assert len(lines) > 1
         assert " ".join(lines) == text
+
+    def test_wrap_breaks_a_long_path_at_separators(self) -> None:
+        font = render.Fonts.default().text
+        text = "Game saved to saves/2026-11-09_14-03-22_5x5_white-road.ptn"
+        lines = render._wrap(text, font, 238)
+        assert all(font.size(line)[0] <= 238 for line in lines)
+        assert "".join(lines).replace(" ", "") == text.replace(" ", "")
+        assert all(line[-1] in "/_-" for line in lines[1:-1])  # broke at separators
