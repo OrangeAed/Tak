@@ -1,6 +1,6 @@
 # Tak
 
-A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the abstract strategy board game. The project includes a rules-complete game engine and a terminal interface for playing both sides. A graphical interface and AI agents are planned; their packages are currently placeholders.
+A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the abstract strategy board game. The project includes a rules-complete game engine, a terminal interface for playing both sides, and a pygame window that draws the board. Making moves in that window, and AI agents, are planned; the AI package is currently a placeholder.
 
 ## Features
 
@@ -8,11 +8,12 @@ A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the 
 - **Terminal play**: play both sides yourself from the command line
 - **Tak and Tinue calls**: after each move, terminal play announces "Tak!" when the move threatens to win next turn, or "Tinue!" when the opponent has no way to stop it
 - **PTN support**: read and write moves and games in Portable Tak Notation
-- **Tests** for the engine and the terminal interface
+- **Board display**: an optional pygame window showing the board, the pieces on it (stacks included), and each player's reserve
+- **Tests** for the engine, the terminal interface, and the board display
 
 Planned, not yet implemented:
 
-- **Optional GUI**: view the board and pieces and make moves graphically
+- **Playing in the GUI**: make moves graphically, by clicking (the window only displays the board today)
 - **AI agents**: algorithms that play as one or both sides, built on the same engine
 
 The full ruleset this project implements is in [`docs/rules.md`](docs/rules.md).
@@ -29,7 +30,7 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
 pip install -e .                 # core engine and CLI
 pip install -e ".[dev]"          # adds pytest, ruff, mypy
-pip install -e ".[gui]"          # adds pygame, for the planned GUI
+pip install -e ".[gui]"          # adds pygame, for the graphical board
 ```
 
 ## Usage
@@ -39,7 +40,14 @@ python -m tak.cli                # play in the terminal
 python -m tak.cli --size 6       # on another board size (3 to 8; the default is 5)
 ```
 
-`python -m tak.gui` (the graphical interface) and `python scripts/play_match.py` (pitting two AI agents against each other) are planned. They currently exit without doing anything.
+```bash
+python -m tak.gui                # show the board in a window (needs the gui extra)
+python -m tak.gui --size 6       # on another board size (3 to 8; the default is 5)
+```
+
+The window shows a new game: the board with ranks (1 at the bottom) and files (a on the left) labelled, and each player's reserve in the sidebar, with Black's at the top and White's at the bottom. Pieces are drawn from the side, so every piece in a stack is visible. Flat stones are wide slabs, walls are upright slabs, and capstones are discs. White's pieces are ivory and Black's are charcoal. A stack of two or more pieces shows its height in the corner of its square; very tall stacks show their top pieces only. The window can be resized, and it closes with Escape. Moves can't be made in it yet.
+
+`python scripts/play_match.py` (pitting two AI agents against each other) is planned. It currently exits without doing anything.
 
 ## Tak and Tinue
 
@@ -100,9 +108,10 @@ Tak/
 │       │   ├── __main__.py   # enables `python -m tak.cli`
 │       │   ├── render.py     # board and status -> text, including the Tak!/Tinue! line
 │       │   └── app.py        # input loop, parsing, error messages, Tak/Tinue calls
-│       ├── gui/              # optional graphical interface (planned; placeholders)
-│       │   ├── __main__.py
-│       │   └── app.py
+│       ├── gui/              # optional graphical interface (needs pygame)
+│       │   ├── __main__.py   # enables `python -m tak.gui`
+│       │   ├── render.py     # draws the board, pieces, reserves, and status with pygame
+│       │   └── app.py        # command line options and the window
 │       └── ai/               # algorithms that play (planned; placeholders)
 │           ├── base.py       # Agent interface: choose_move(game) -> Move
 │           ├── random_agent.py
@@ -112,6 +121,7 @@ Tak/
 │   ├── conftest.py           # shared fixtures (e.g. board builders)
 │   ├── engine/
 │   ├── cli/
+│   ├── gui/                  # drawing checked pixel by pixel; skipped without pygame
 │   └── threats/              # Tak and Tinue, from the engine through to the terminal
 │       ├── conftest.py                   # position builder, scripted terminal sessions
 │       ├── test_regular_moves.py         # move generation for either player
@@ -142,7 +152,7 @@ Tak/
 
 **`tak.cli`: terminal play.** Renders the board as text and runs an input loop so a person can play both sides. After a threatening move it announces "Tak!" or "Tinue!". All rules, move validation, and threat detection come from the engine.
 
-**`tak.gui`: graphical play (optional, planned).** Will draw the board and pieces and turn clicks into moves. Its dependency is an optional extra, so the rest of the project does not require it. Not implemented yet: the modules are placeholders.
+**`tak.gui`: graphical display (optional).** Draws the board, the pieces, and both reserves in a pygame window. `render.py` only draws, with no window or input of its own, so turning clicks into moves can be added on top of it. Its dependency is an optional extra, so the rest of the project does not require it. Playing moves in the window is planned.
 
 **`tak.ai`: computer players (planned).** Every AI will implement the `Agent` interface in `base.py`: given a game, return a move. The planned agents start with a random baseline and build up to heuristic evaluation and minimax search. Not implemented yet: the modules are placeholders.
 
@@ -152,7 +162,7 @@ Tak/
 - **Everything that plays is an agent.** The goal is for a human at the terminal, a GUI click handler, and an AI to all be "something that returns a move for a given game", so that the game loop does not care who controls which side and human vs. human, human vs. AI, and AI vs. AI all work with no special cases. Today the terminal loop reads moves for both sides directly; the `Agent` interface arrives with the AI.
 - **Legal moves come from the engine.** The CLI checks every move with the engine, and the GUI and AI are to use the same legal move list, so they can never disagree about what is allowed.
 - **`src/` layout.** Keeping the package under `src/` ensures tests run against the installed package rather than whatever happens to be in the working directory.
-- **Tests mirror the source tree.** Each package gets a matching folder under `tests/` (`ai/` and `gui/` will get theirs when they are implemented). The engine gets the heaviest testing, since road detection, wall flattening, and carry limits are common sources of bugs, and an AI built on a buggy engine learns the bugs. Tak and Tinue span the engine and the terminal, so their tests live together in `tests/threats/`. Alongside hand-built positions, they check the results against brute force that plays out every move with the real engine.
+- **Tests mirror the source tree.** Each package gets a matching folder under `tests/` (`ai/` will get its own when it is implemented). The engine gets the heaviest testing, since road detection, wall flattening, and carry limits are common sources of bugs, and an AI built on a buggy engine learns the bugs. Tak and Tinue span the engine and the terminal, so their tests live together in `tests/threats/`. Alongside hand-built positions, they check the results against brute force that plays out every move with the real engine.
 
 ## Development
 
