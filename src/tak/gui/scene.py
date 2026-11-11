@@ -147,6 +147,21 @@ class View:
             self.offset[1] - self.scale * _dot(d, self.up) / depth,
         )
 
+    def ground_point(self, x: float, y: float, z: float = 0.0) -> Point | None:
+        """The point at height ``z`` that shows at pixel ``(x, y)``: projection undone.
+
+        Returns ``None`` if that pixel looks above the horizon.
+        """
+        a = (x - self.offset[0]) / self.scale
+        b = -(y - self.offset[1]) / self.scale
+        ray = tuple(
+            f + a * r + b * u for f, r, u in zip(self.forward, self.right, self.up, strict=True)
+        )
+        if ray[2] >= 0:
+            return None
+        t = (z - self.eye[2]) / ray[2]
+        return (self.eye[0] + t * ray[0], self.eye[1] + t * ray[1])
+
     def faces_camera(self, normal: Vec3, point: Vec3) -> bool:
         return _dot(normal, _sub(self.eye, point)) > 0
 
@@ -392,13 +407,16 @@ def _wall_grain(corners: Sequence[Vec3], rng: random.Random) -> list[list[Vec3]]
     return lines
 
 
-def stack_faces(stack: Sequence[Piece], square: Square) -> list[Face]:
-    """Every piece in a stack, bottom first, each resting on the one below."""
+def stack_faces(stack: Sequence[Piece], square: Square, base: float = 0.0) -> list[Face]:
+    """Every piece in a stack, bottom first, each resting on the one below.
+
+    ``base`` lifts the whole stack off the board, for stones being carried.
+    """
     center = (square.file + 0.5, square.rank + 0.5)
     faces: list[Face] = []
     for level, piece in enumerate(stack):
         seed = (square.file * 8 + square.rank) * 256 + level * 2 + (piece.color is Color.BLACK)
-        faces.extend(piece_faces(piece, center, level * FLAT_HEIGHT, seed))
+        faces.extend(piece_faces(piece, center, base + level * FLAT_HEIGHT, seed))
     return faces
 
 
@@ -467,3 +485,71 @@ def draw_order(size: int, eye: Vec3) -> list[Square]:
         squares,
         key=lambda s: -math.hypot(s.file + 0.5 - eye[0], s.rank + 0.5 - eye[1]),
     )
+
+
+# --- Picking: which square is under the mouse ---------------------------------------
+
+
+def pick_square(
+    view: View, size: int, heights: dict[Square, float], x: float, y: float
+) -> Square | None:
+    """The square shown at pixel ``(x, y)``, counting the stacks standing on squares.
+
+    ``heights`` gives how tall the stack on each square stands. A click on the
+    side or top of a stack picks that stack's square, even where it stands in
+    front of other squares; anywhere else, the square on the board below the
+    mouse is picked. Returns ``None`` off the board.
+    """
+    half = FLAT_WIDTH / 2
+    for square in reversed(draw_order(size, view.eye)):  # nearest first: drawn on top
+        height = heights.get(square, 0.0)
+        if height <= 0:
+            continue
+        cx, cy = square.file + 0.5, square.rank + 0.5
+        corners = [
+            view.project((cx + dx, cy + dy, z))
+            for dx in (-half, half)
+            for dy in (-half, half)
+            for z in (0.0, height)
+        ]
+        if _inside(_convex_hull(corners), (x, y)):
+            return square
+    point = view.ground_point(x, y)
+    if point is None:
+        return None
+    file, rank = math.floor(point[0]), math.floor(point[1])
+    if 0 <= file < size and 0 <= rank < size:
+        return Square(file, rank)
+    return None
+
+
+def _convex_hull(points: list[Point]) -> list[Point]:
+    """The convex hull, counter-clockwise (Andrew's monotone chain)."""
+    ordered = sorted(set(points))
+    if len(ordered) < 3:
+        return ordered
+
+    def turn(o: Point, a: Point, b: Point) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: list[Point] = []
+    for p in ordered:
+        while len(lower) >= 2 and turn(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    upper: list[Point] = []
+    for p in reversed(ordered):
+        while len(upper) >= 2 and turn(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+
+def _inside(hull: list[Point], point: Point) -> bool:
+    """True if ``point`` is inside (or on) a convex polygon given counter-clockwise."""
+    if len(hull) < 3:
+        return False
+    for (x1, y1), (x2, y2) in zip(hull, hull[1:] + hull[:1], strict=True):
+        if (x2 - x1) * (point[1] - y1) - (y2 - y1) * (point[0] - x1) < 0:
+            return False
+    return True

@@ -39,21 +39,33 @@ pip install -e ".[gui]"          # adds pygame, for the GUI
 python -m tak.cli                # play in the terminal
 python -m tak.cli --size 6       # on another board size (3 to 8; the default is 5)
 
-tak-gui                          # play in a window (needs the gui extra)
-tak-gui --size 6                 # on another board size (3 to 8; the default is 5)
-python -m tak.gui --size 6       # the same, without the console script
+python -m tak.gui                # play in a window (needs the gui extra)
+python -m tak.gui --size 6       # on another board size (3 to 8; the default is 5)
+python -m tak.gui --load saves/2026-11-09_14-03-22_5x5_white-road.ptn   # step through a saved game
 ```
 
 The window shows the board in 3D. White plays light maple and Black dark walnut; flat stones are low octagonal tiles, walls are tiles standing on edge, and capstones are tall bevelled drums. Stacks are built up layer by layer so you can read them from the side, and each stack of two or more has a tag with its height. Ranks and files are marked on all four sides of the frame.
 
+**Moving by clicking.** Click an empty square to place a flat stone. For a wall or capstone, pick it under "Place" in the panel first, or Shift+click (wall) or Ctrl+click (capstone). To move a stack, click it to lift it: as many stones as the carry limit allows come up. Click it again to carry one fewer, then click a neighbouring square to drop a stone there. Click that square again to drop another, or the next square along to move on. The move is played when the last stone is dropped. While a stack is lifted, its square is blue, and the squares you can click next are green. Only legal moves can be made this way, since every step is checked against the engine's list of legal moves. Moves can still be typed in PTN too.
+
+**Stepping through a game.** The buttons under the piece chooser go to the first move, back one, forward one, and to the last move. The last move played is tinted yellow on the board. This works for the game you're playing and for a saved game opened with `--load`, which opens at the start. Playing a move part-way through a game replaces the moves after it. For a loaded game the window asks first (press Enter to go ahead); the file itself is never changed, and if you play on to a finish, the new game is saved as a new file.
+
+The window can be resized, down to a minimum of 860×600.
+
 | Control | Action |
 | ------- | ------ |
+| Click | Place a piece, or lift a stack and drop it |
+| Shift+click / Ctrl+click | Place a wall / a capstone |
+| Right-click or Esc | Cancel a lifted stack (Esc also clears the input line) |
 | Type a PTN move, then Enter | Play the move |
-| Drag with the left mouse button, or hold the arrow keys | Turn (left/right) and tilt (up/down) the board |
+| Drag with the mouse, or hold the arrow keys | Turn (left/right) and tilt (up/down) the board |
 | Mouse wheel | Zoom |
-| Tab | Look from the other player's side |
-| Home | Reset the view |
-| Ctrl+Z / Esc / Ctrl+Q | Undo / clear the input line / quit |
+| Tab / Home | Look from the other player's side / reset the view |
+| Ctrl+Left / Ctrl+Right (or Ctrl+Z / Ctrl+Y) | Step back / forward one move; hold to keep stepping |
+| Ctrl+Home / Ctrl+End | Go to the first / last move |
+| Ctrl+Q | Quit |
+
+Held keys repeat, so holding Backspace deletes until you let go.
 
 `python scripts/play_match.py` (pitting two AI agents against each other) is planned. It currently exits without doing anything.
 
@@ -67,7 +79,7 @@ Result: R-0
 Game saved to saves/2026-11-09_14-03-22_3x3_white-road.ptn
 ```
 
-Files are named after when the game finished, the board size, and the outcome (`white-road`, `black-flats`, `draw`, ...). An existing save is never overwritten: a second game in the same second gets `-2` added to its name. In the window you can still undo after the game ends; if you then finish the game again, its file is updated with the new ending rather than a second file being made. Games you quit before the end are not saved.
+Files are named after when the game finished, the board size, and the outcome (`white-road`, `black-flats`, `draw`, ...). An existing save is never overwritten: a second game in the same second gets `-2` added to its name. In the window you can still step back after the game ends; if you then play on to a different finish, its file is updated with the new ending rather than a second file being made. Stepping through a game opened with `--load` never saves it again; only a new ending played from it is saved, as a new file. Games you quit before the end are not saved.
 
 The files are standard PTN with `Size`, `Date`, `Time`, and `Result` headers, so they load back into the engine (or any other Tak tool):
 
@@ -78,7 +90,7 @@ from tak.engine import game_from_ptn
 game = game_from_ptn(Path("saves/2026-11-09_14-03-22_3x3_white-road.ptn").read_text())
 ```
 
-Both commands accept `--saves-dir DIR` to save somewhere else and `--no-save` to not save at all. The `TAK_SAVES_DIR` environment variable also changes the folder (the test suite uses it so tests never write into `saves/`).
+Both `python -m tak.cli` and `python -m tak.gui` accept `--saves-dir DIR` to save somewhere else and `--no-save` to not save at all. The `TAK_SAVES_DIR` environment variable also changes the folder (the test suite uses it so tests never write into `saves/`).
 
 ## Tak and Tinue
 
@@ -142,9 +154,11 @@ Tak/
 │       │   └── app.py        # input loop, parsing, error messages, Tak/Tinue calls
 │       ├── gui/              # optional graphical interface (pygame)
 │       │   ├── __main__.py   # enables `python -m tak.gui`
-│       │   ├── scene.py      # small 3D renderer: camera, projection, wooden meshes, draw order
-│       │   ├── render.py     # game state -> frame: 3D board, labels, stacks, reserves panel
-│       │   └── app.py        # window, event loop, PTN input, size argument
+│       │   ├── scene.py      # small 3D renderer: camera, projection, meshes, draw order, picking
+│       │   ├── render.py     # game state -> frame: 3D board, labels, stacks, panel and buttons
+│       │   ├── clicks.py     # click to move: clicks -> legal moves (no drawing)
+│       │   ├── session.py    # the game's timeline: stepping, loading, confirming, saving
+│       │   └── app.py        # window, event handling (Controller), command-line options
 │       └── ai/               # algorithms that play (planned; placeholders)
 │           ├── base.py       # Agent interface: choose_move(game) -> Move
 │           ├── random_agent.py
@@ -155,7 +169,7 @@ Tak/
 │   ├── test_saves.py         # file names, never overwriting, round trips, save options
 │   ├── engine/
 │   ├── cli/
-│   ├── gui/                  # projection, draw order, occlusion, colors, controls (headless pygame)
+│   ├── gui/                  # clicking, stepping, picking, drawing, controls (headless pygame)
 │   └── threats/              # Tak and Tinue, from the engine through to the terminal
 │       ├── conftest.py                   # position builder, scripted terminal sessions
 │       ├── test_regular_moves.py         # move generation for either player
@@ -188,7 +202,7 @@ Tak/
 
 **`tak.cli`: terminal play.** Renders the board as text and runs an input loop so a person can play both sides. After a threatening move it announces "Tak!" or "Tinue!". All rules, move validation, and threat detection come from the engine.
 
-**`tak.gui`: graphical play (optional).** Draws the board in 3D in a pygame window, with rank and file labels, every stack built up piece by piece, and both players' reserves; the view can be turned, tilted, and zoomed. pygame only draws 2D shapes, so `scene.py` does the 3D itself (perspective projection, shading, and back-to-front painting), with no other dependencies. Moves are typed in PTN, just as in the terminal. Its dependency is an optional extra (`pip install -e ".[gui]"`), so the rest of the project does not require it. Start it with `tak-gui` or `python -m tak.gui`.
+**`tak.gui`: graphical play (optional).** Draws the board in 3D in a pygame window, with rank and file labels, every stack built up piece by piece, and both players' reserves; the view can be turned, tilted, and zoomed. pygame only draws 2D shapes, so `scene.py` does the 3D itself (perspective projection, shading, and back-to-front painting), with no other dependencies. Moves are made by clicking (checked step by step against the engine's legal moves) or typed in PTN, and any game, including a saved one, can be stepped through. Its dependency is an optional extra (`pip install -e ".[gui]"`), so the rest of the project does not require it. Start it with `python -m tak.gui`.
 
 **`tak.ai`: computer players (planned).** Every AI will implement the `Agent` interface in `base.py`: given a game, return a move. The planned agents start with a random baseline and build up to heuristic evaluation and minimax search. Not implemented yet: the modules are placeholders.
 

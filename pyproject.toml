@@ -15,10 +15,6 @@ classifiers = [
     "Topic :: Games/Entertainment :: Board Games",
 ]
 
-[project.scripts]
-# Needs the gui extra: pip install -e ".[gui]"
-tak-gui = "tak.gui.app:main"
-
 [project.optional-dependencies]
 gui = [
     "pygame>=2.5",

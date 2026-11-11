@@ -135,3 +135,42 @@ class TestDrawOrder:
         view = scene.board_view(5, Camera().flipped(), VIEWPORT)
         order = scene.draw_order(5, view.eye)
         assert order.index(sq("c1")) < order.index(sq("c3")) < order.index(sq("c5"))
+
+
+class TestPicking:
+    @pytest.mark.parametrize("yaw", [0.0, 1.2, math.pi, 4.5])
+    def test_ground_point_undoes_the_projection(self, yaw: float) -> None:
+        view = scene.board_view(5, Camera(yaw=yaw, pitch=0.7), VIEWPORT)
+        for x, y in [(0.3, 0.2), (2.5, 2.5), (4.9, 1.1)]:
+            back = view.ground_point(*view.project((x, y, 0.0)))
+            assert back == pytest.approx((x, y))
+
+    def test_ground_point_at_a_height(self) -> None:
+        view = scene.board_view(5, Camera(), VIEWPORT)
+        point = view.ground_point(*view.project((1.5, 3.5, 0.8)), z=0.8)
+        assert point == pytest.approx((1.5, 3.5))
+
+    def test_empty_board_picks_the_square_under_the_mouse(self) -> None:
+        view = scene.board_view(5, Camera(), VIEWPORT)
+        for name in ("a1", "c3", "e5", "b4"):
+            square = sq(name)
+            pixel = view.project((square.file + 0.5, square.rank + 0.5, 0.0))
+            assert scene.pick_square(view, 5, {}, *pixel) == square
+
+    def test_off_the_board_picks_nothing(self) -> None:
+        view = scene.board_view(5, Camera(), VIEWPORT)
+        rim = view.project((-0.3, 2.5, 0.0))
+        assert scene.pick_square(view, 5, {}, *rim) is None
+        assert scene.pick_square(view, 5, {}, 5.0, 5.0) is None  # above the horizon/backdrop
+
+    def test_a_tall_stack_is_picked_where_it_covers_other_squares(self) -> None:
+        view = scene.board_view(5, Camera(), VIEWPORT)
+        side = view.project((2.5, 1.5, 1.5))  # up the side of a tall stack on c2...
+        assert scene.pick_square(view, 5, {}, *side) != sq("c2")  # ...which, without it, is c3+
+        assert scene.pick_square(view, 5, {sq("c2"): 2.0}, *side) == sq("c2")
+
+    def test_the_nearer_of_two_stacks_wins(self) -> None:
+        view = scene.board_view(5, Camera(), VIEWPORT)
+        heights = {sq("c2"): 2.0, sq("c3"): 2.0}
+        front_top = view.project((2.5, 1.5, 1.9))  # c2 stands in front of c3
+        assert scene.pick_square(view, 5, heights, *front_top) == sq("c2")

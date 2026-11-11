@@ -16,20 +16,37 @@ WHITE_FLAT = Piece(Color.WHITE, PieceType.FLAT)
 BLACK_FLAT = Piece(Color.BLACK, PieceType.FLAT)
 
 
-def frame(game: Game, camera: Camera | None = None) -> tuple[pygame.Surface, render.View]:
-    layout = render.layout_for(game.size)
+def frame(
+    game: Game,
+    camera: Camera | None = None,
+    extras: render.SceneExtras | None = None,
+    window: tuple[int, int] = render.DEFAULT_WINDOW,
+) -> tuple[pygame.Surface, render.Frame]:
+    layout = render.layout_for(game.size, window)
     surface = pygame.Surface(layout.window_size)
-    view = render.draw_game(
-        surface, game, layout, render.Fonts.default(), camera=camera, input_text="a1"
+    drawn = render.draw_game(
+        surface,
+        game,
+        layout,
+        render.Fonts.default(),
+        camera=camera,
+        input_text="a1",
+        extras=extras,
     )
-    return surface, view
+    return surface, drawn
 
 
-def color_on(game: Game, name: str, z: float, camera: Camera | None = None) -> tuple[int, ...]:
+def color_on(
+    game: Game,
+    name: str,
+    z: float,
+    camera: Camera | None = None,
+    extras: render.SceneExtras | None = None,
+) -> tuple[int, ...]:
     """The pixel color where a point above the middle of a square is drawn."""
-    surface, view = frame(game, camera)
-    layout = render.layout_for(game.size)
-    return tuple(surface.get_at(render.square_center(view, layout, Square.from_name(name), z)))[:3]
+    surface, drawn = frame(game, camera, extras)
+    square = Square.from_name(name)
+    return tuple(surface.get_at(drawn.to_window((square.file + 0.5, square.rank + 0.5, z))))[:3]
 
 
 def brightness(color: tuple[int, ...]) -> float:
@@ -38,12 +55,26 @@ def brightness(color: tuple[int, ...]) -> float:
 
 class TestLayout:
     @pytest.mark.parametrize("size", sorted(BOARD_CONFIG))
-    def test_viewport_and_panel_fit_the_window(self, size: int) -> None:
-        layout = render.layout_for(size)
-        window = pygame.Rect((0, 0), layout.window_size)
-        assert window.contains(layout.viewport)
-        assert window.contains(layout.panel_rect)
+    @pytest.mark.parametrize("window", [render.DEFAULT_WINDOW, (900, 620), (1920, 1080)])
+    def test_viewport_and_panel_fit_the_window(self, size: int, window: tuple[int, int]) -> None:
+        layout = render.layout_for(size, window)
+        assert layout.window_size == window
+        whole = pygame.Rect((0, 0), layout.window_size)
+        assert whole.contains(layout.viewport)
+        assert whole.contains(layout.panel_rect)
         assert not layout.viewport.colliderect(layout.panel_rect)
+
+    def test_too_small_windows_get_the_minimum(self) -> None:
+        assert render.layout_for(5, (100, 100)).window_size == render.MIN_WINDOW
+
+    @pytest.mark.parametrize("window", [render.MIN_WINDOW, render.DEFAULT_WINDOW, (1920, 1080)])
+    def test_panel_controls_do_not_overlap(self, window: tuple[int, int]) -> None:
+        _, drawn = frame(Game(6), window=window)
+        rects = list(drawn.buttons.values())
+        for i, a in enumerate(rects):
+            assert pygame.Rect((0, 0), window).contains(a)
+            for b in rects[i + 1 :]:
+                assert not a.colliderect(b)
 
 
 class TestDrawing:
@@ -102,6 +133,68 @@ class TestDrawing:
         icon = render.piece_icon(color, piece_type, 40)
         assert icon.get_size() == (40, 40)
         assert icon.get_at((20, 20)).a > 0  # something is drawn in the middle
+
+
+class TestExtras:
+    def test_carried_stones_float_above_the_board(self) -> None:
+        game = Game(5)
+        light = (WHITE_FLAT,) * 3
+        extras = render.SceneExtras(floating=(Square.from_name("c3"), light))
+        _, drawn = frame(game, extras=extras)
+        assert drawn.heights[Square.from_name("c3")] > render.FLOAT_GAP  # lifted off the board
+        # The stones are drawn up in the air, not on the board.
+        z = render.FLOAT_GAP + 3 * FLAT_HEIGHT
+        assert brightness(color_on(game, "c3", z, extras=extras)) > 170
+
+    def test_highlights_tint_squares(self) -> None:
+        game = Game(5)
+        plain = color_on(game, "b2", 0.0)
+        extras = render.SceneExtras(highlights={Square.from_name("b2"): render.TARGET})
+        tinted = color_on(game, "b2", 0.0, extras=extras)
+        assert tinted[1] > plain[1]  # greener
+
+    def test_a_preview_board_is_drawn_instead_of_the_game_board(self) -> None:
+        game = Game(5)
+        preview = game.board.copy()
+        preview.set_stack(Square.from_name("d4"), (BLACK_FLAT,))
+        dark = color_on(game, "d4", FLAT_HEIGHT, extras=render.SceneExtras(board=preview))
+        assert brightness(dark) < 110
+        assert not game.board.stack(Square.from_name("d4"))
+
+
+class TestFrame:
+    def test_square_at_finds_squares_and_ignores_the_panel(self) -> None:
+        _, drawn = frame(Game(5))
+        for name in ("a1", "c3", "e5"):
+            square = Square.from_name(name)
+            pos = drawn.to_window((square.file + 0.5, square.rank + 0.5, 0.0))
+            assert drawn.square_at(pos) == square
+        assert drawn.square_at(drawn.buttons["nav:back"].center) is None
+
+    def test_buttons(self) -> None:
+        _, drawn = frame(Game(5))
+        assert {"nav:start", "nav:back", "nav:forward", "nav:end", "place:F"} <= set(drawn.buttons)
+        assert drawn.button_at(drawn.buttons["nav:end"].center) == "nav:end"
+
+    def test_piece_choices_follow_the_game(self, started: Callable[..., Game]) -> None:
+        _, drawn = frame(Game(5))
+        assert {k for k in drawn.buttons if k.startswith("place:")} == {"place:F"}  # opening
+        _, drawn = frame(started("a1 e5"))
+        assert {k for k in drawn.buttons if k.startswith("place:")} == {
+            "place:F",
+            "place:S",
+            "place:C",
+        }
+        _, drawn = frame(started("a1 c3", size=3))  # no capstones on 3x3
+        assert "place:C" not in drawn.buttons
+        _, drawn = frame(started("a1 c3 b1 b3 b2 a3 c2", size=3))  # game over
+        assert not any(k.startswith("place:") for k in drawn.buttons)
+
+    def test_big_windows_skip_supersampling(self) -> None:
+        _, small = frame(Game(5))
+        _, big = frame(Game(5), window=(1920, 1080))
+        assert small.supersample == render.SUPERSAMPLE
+        assert big.supersample == 1
 
 
 class TestPanel:
