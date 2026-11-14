@@ -1,6 +1,6 @@
 # Tak
 
-A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the abstract strategy board game. The project includes a rules-complete game engine, a terminal interface for playing both sides, and an optional graphical interface. AI agents are planned; their package is currently a placeholder.
+A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the abstract strategy board game. The project includes a rules-complete game engine, a terminal interface, an optional graphical interface, and three computer opponents to play against in either one.
 
 ## Features
 
@@ -10,11 +10,8 @@ A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the 
 - **Tak and Tinue calls**: after each move, terminal play announces "Tak!" when the move threatens to win next turn, or "Tinue!" when the opponent has no way to stop it
 - **PTN support**: read and write moves and games in Portable Tak Notation
 - **Saved games**: every finished game, in the terminal or the window, is saved as a PTN file in `saves/`
-- **Tests** for the engine and the terminal interface
-
-Planned, not yet implemented:
-
-- **AI agents**: algorithms that play as one or both sides, built on the same engine
+- **Computer opponents**: three of them, from a random mover to a strategist that plays for Tinue, in the terminal or the window (`python -m tak.play`). All follow fixed, hand-written rules; none uses machine learning
+- **Tests** for the engine, the computer opponents, and both interfaces
 
 The full ruleset this project implements is in [`docs/rules.md`](docs/rules.md).
 
@@ -42,6 +39,8 @@ python -m tak.cli --size 6       # on another board size (3 to 8; the default is
 python -m tak.gui                # play in a window (needs the gui extra)
 python -m tak.gui --size 6       # on another board size (3 to 8; the default is 5)
 python -m tak.gui --load saves/2026-11-09_14-03-22_5x5_white-road.ptn   # step through a saved game
+
+python -m tak.play               # play against the computer (see below for the options)
 ```
 
 The window shows the board in 3D. White plays light maple and Black dark walnut; flat stones are low octagonal tiles, walls are tiles standing on edge, and capstones are tall bevelled drums. Stacks are built up layer by layer so you can read them from the side, and each stack of two or more has a tag with its height. Ranks and files are marked on all four sides of the frame.
@@ -67,7 +66,53 @@ The window can be resized, down to a minimum of 860×600.
 
 Held keys repeat, so holding Backspace deletes until you let go.
 
-`python scripts/play_match.py` (pitting two AI agents against each other) is planned. It currently exits without doing anything.
+## Playing against the computer
+
+```bash
+python -m tak.play                                  # against Greedy, as White, on 5x5, in the terminal
+python -m tak.play --bot strategist --color random  # the strongest opponent; a coin toss for your color
+python -m tak.play -b random -c black -s 4 --gui    # in the window
+```
+
+| Option | Choices | Default |
+| ------ | ------- | ------- |
+| `-b`, `--bot` | `random`, `greedy`, `strategist` (easiest to hardest) | `greedy` |
+| `-c`, `--color` | `white`, `black`, or `random`: the color *you* play. White moves first | `white` |
+| `-s`, `--size` | 3 to 8 | 5 |
+| `--gui` | play in the 3D window instead of the terminal (needs the gui extra) | terminal |
+| `--seed N` | make the computer's choices (and a random color) repeatable | |
+
+`--saves-dir DIR` and `--no-save` work as for the other commands. The same game can be started from Python:
+
+```python
+from tak.play import play_against_bot
+
+play_against_bot(bot="strategist", color="random", size=6)  # in the terminal
+play_against_bot(bot="greedy", color="black", gui=True)  # in the window
+```
+
+**The opponents.** All three are ordinary code following fixed rules. None learns, trains, or plays against itself. Chance comes into Random's moves, Greedy's weighted picks, and how Strategist breaks ties, and `--seed` fixes all of it, so a game can be repeated.
+
+- **Random** plays a legal move chosen at random.
+- **Greedy** takes a win if one is available, and otherwise blocks your win if you have one. Failing both, it picks a move at random, weighted heavily (4× per square) toward moves that gain squares topped by its flat stones or capstones. It never plays a move that lets you win next turn when another move avoids that.
+- **Strategist** also takes a win and blocks yours. Next it looks for a move that makes Tinue, a threat you can't stop, and plays it. Otherwise it plays the move that leaves the best position by a weighted score. The score counts the length of its longest road against yours, how close each of you is to completing a road, control of the center, the number of squares controlled, and the flat count (which matters more as the game nears its end). Making a threat (Tak) earns a bonus. Like Greedy, it never hands you a win it could avoid.
+
+On the first turn Greedy and Strategist put your stone in a corner, the usual choice. In matches (see `scripts/play_match.py` below), Greedy beats Random almost every game, and Strategist beats Greedy almost every game on every board size. Strategist thinks longest: on 5x5 it typically answers in under a tenth of a second and at most a few tenths. On 7x7 and 8x8 it averages about a quarter of a second, with the odd move taking up to a second.
+
+**In the terminal**, the computer's moves are announced as it makes them (`Black (Strategist) plays c3.`), followed by "Tak!" or "Tinue!" when they threaten. `undo` takes back your last move along with the computer's reply, so it's your turn again.
+
+**In the window**, the computer moves by itself when its turn comes; the panel says who is playing whom and shows when the computer is thinking. The view starts from your side of the board. It thinks in the background, so you can still turn the board or step through the game meanwhile. It only moves at the latest position: step back and it waits; play a new move from an earlier position and it answers that one.
+
+Saved games against the computer record who played which side in PTN's `Player1` (White) and `Player2` (Black) headers.
+
+### Computer against computer
+
+```bash
+python scripts/play_match.py strategist greedy                    # 20 games on 5x5, swapping colors
+python scripts/play_match.py greedy random --games 50 --size 6 --seed 1
+```
+
+The script prints each result, then the score and how long each player took per move.
 
 ## Saved games
 
@@ -90,7 +135,7 @@ from tak.engine import game_from_ptn
 game = game_from_ptn(Path("saves/2026-11-09_14-03-22_3x3_white-road.ptn").read_text())
 ```
 
-Both `python -m tak.cli` and `python -m tak.gui` accept `--saves-dir DIR` to save somewhere else and `--no-save` to not save at all. The `TAK_SAVES_DIR` environment variable also changes the folder (the test suite uses it so tests never write into `saves/`).
+`python -m tak.cli`, `python -m tak.gui`, and `python -m tak.play` all accept `--saves-dir DIR` to save somewhere else and `--no-save` to not save at all. The `TAK_SAVES_DIR` environment variable also changes the folder (the test suite uses it so tests never write into `saves/`).
 
 ## Tak and Tinue
 
@@ -158,17 +203,24 @@ Tak/
 │       │   ├── render.py     # game state -> frame: 3D board, labels, stacks, panel and buttons
 │       │   ├── clicks.py     # click to move: clicks -> legal moves (no drawing)
 │       │   ├── session.py    # the game's timeline: stepping, loading, confirming, saving
+│       │   ├── computer.py   # the computer's move, worked out in a background thread
 │       │   └── app.py        # window, event handling (Controller), command-line options
-│       └── ai/               # algorithms that play (planned; placeholders)
+│       ├── play.py           # play against the computer: `python -m tak.play`, play_against_bot()
+│       └── ai/               # computer players (fixed rules, no machine learning)
 │           ├── base.py       # Agent interface: choose_move(game) -> Move
-│           ├── random_agent.py
-│           ├── evaluation.py # heuristics
-│           └── minimax.py    # search
+│           ├── random_agent.py      # Random: any legal move
+│           ├── greedy_agent.py      # Greedy: win, block, otherwise gain squares
+│           ├── strategist_agent.py  # Strategist: win, block, Tinue, otherwise best position
+│           ├── tactics.py    # fast one-move look-ahead: immediate wins, safe moves, Tinue
+│           ├── evaluation.py # scoring a position: roads, center, squares, flats
+│           └── minimax.py    # deeper search (planned; placeholder)
 ├── tests/                    # mirrors src/tak, plus threats/ for Tak and Tinue
 │   ├── conftest.py           # shared fixtures (e.g. board builders); keeps saves out of saves/
 │   ├── test_saves.py         # file names, never overwriting, round trips, save options
+│   ├── test_play.py          # playing against the computer: options, whole games, the window
 │   ├── engine/
 │   ├── cli/
+│   ├── ai/                   # computer players, with the fast look-ahead checked against the engine
 │   ├── gui/                  # clicking, stepping, picking, drawing, controls (headless pygame)
 │   └── threats/              # Tak and Tinue, from the engine through to the terminal
 │       ├── conftest.py                   # position builder, scripted terminal sessions
@@ -178,7 +230,7 @@ Tak/
 │       ├── test_threat_announcements.py  # "Tak!" and "Tinue!" in the terminal
 │       └── test_road_search.py           # road search, which the checks run constantly
 ├── scripts/
-│   └── play_match.py         # pit two agents against each other (planned; placeholder)
+│   └── play_match.py         # pit two computer players against each other
 └── saves/                    # local saved games and match output (contents ignored by git)
 ```
 
@@ -200,19 +252,21 @@ Tak/
 
 **`tak.saves`: saved games.** Writes a finished game as a new PTN file in `saves/` and provides the `--saves-dir` and `--no-save` options. It does file I/O, so it sits beside the engine rather than in it, and both front ends use it.
 
-**`tak.cli`: terminal play.** Renders the board as text and runs an input loop so a person can play both sides. After a threatening move it announces "Tak!" or "Tinue!". All rules, move validation, and threat detection come from the engine.
+**`tak.cli`: terminal play.** Renders the board as text and runs an input loop so a person can play both sides, or one side against the computer. After a threatening move it announces "Tak!" or "Tinue!". All rules, move validation, and threat detection come from the engine.
 
-**`tak.gui`: graphical play (optional).** Draws the board in 3D in a pygame window, with rank and file labels, every stack built up piece by piece, and both players' reserves; the view can be turned, tilted, and zoomed. pygame only draws 2D shapes, so `scene.py` does the 3D itself (perspective projection, shading, and back-to-front painting), with no other dependencies. Moves are made by clicking (checked step by step against the engine's legal moves) or typed in PTN, and any game, including a saved one, can be stepped through. Its dependency is an optional extra (`pip install -e ".[gui]"`), so the rest of the project does not require it. Start it with `python -m tak.gui`.
+**`tak.gui`: graphical play (optional).** Draws the board in 3D in a pygame window, with rank and file labels, every stack built up piece by piece, and both players' reserves; the view can be turned, tilted, and zoomed. pygame only draws 2D shapes, so `scene.py` does the 3D itself (perspective projection, shading, and back-to-front painting), with no other dependencies. Moves are made by clicking (checked step by step against the engine's legal moves) or typed in PTN, and any game, including a saved one, can be stepped through. Its dependency is an optional extra (`pip install -e ".[gui]"`), so the rest of the project does not require it. Start it with `python -m tak.gui`, or `python -m tak.play --gui` to play the computer; the computer thinks in a background thread (`computer.py`) so the window stays responsive.
 
-**`tak.ai`: computer players (planned).** Every AI will implement the `Agent` interface in `base.py`: given a game, return a move. The planned agents start with a random baseline and build up to heuristic evaluation and minimax search. Not implemented yet: the modules are placeholders.
+**`tak.ai`: computer players.** Every computer player implements the `Agent` interface in `base.py`: given a game, return a move, without changing the game (agents think on a copy, `Game.copy()`). The three players are described under [Playing against the computer](#playing-against-the-computer). They are built from two modules of plain, hand-tuned code. `tactics.py` answers "can this player win right now?", "does this move hand the opponent a win?" and "is this Tinue?". It gives the same answers as the engine's own checks but several times faster, which matters because the stronger players ask after every move they consider. Road wins by placement are read off the connected groups of road pieces. A slide is only tried one by one when the line it moves along could possibly complete a road. Near the end, where flat wins are possible, it defers to the engine. `evaluation.py` scores positions for the Strategist. Deeper search (`minimax.py`) is still a placeholder.
+
+**`tak.play`: playing the computer.** The `python -m tak.play` command and the `play_against_bot()` function: choose the opponent, your color, the board size, and the terminal or the window.
 
 ## Design principles
 
-- **Dependencies point one way.** `cli`, `gui`, and `ai` depend on `engine`; `engine` depends on none of them. One rules implementation serves every interface.
-- **Everything that plays is an agent.** The goal is for a human at the terminal, a GUI click handler, and an AI to all be "something that returns a move for a given game", so that the game loop does not care who controls which side and human vs. human, human vs. AI, and AI vs. AI all work with no special cases. Today the terminal loop reads moves for both sides directly; the `Agent` interface arrives with the AI.
-- **Legal moves come from the engine.** The CLI checks every move with the engine, and the GUI and AI are to use the same legal move list, so they can never disagree about what is allowed.
+- **Dependencies point one way.** `cli`, `gui`, and `ai` depend on `engine`; `engine` depends on none of them. `cli` and `gui` use `ai`, and `play` sits on top of them all. One rules implementation serves every interface.
+- **Everything that plays is an agent.** The goal is for a human at the terminal, a GUI click handler, and an AI to all be "something that returns a move for a given game", so that the game loop does not care who controls which side and human vs. human, human vs. AI, and AI vs. AI all work with no special cases. The terminal loop and the window take an `Agent` for either side (or both); sides without one are played by the person.
+- **Legal moves come from the engine.** The CLI checks every move with the engine, and the GUI and the computer players use the same legal move list, so they can never disagree about what is allowed.
 - **`src/` layout.** Keeping the package under `src/` ensures tests run against the installed package rather than whatever happens to be in the working directory.
-- **Tests mirror the source tree.** Each package gets a matching folder under `tests/` (`ai/` will get its own when it is implemented). The GUI tests run pygame headless on SDL's dummy video driver, so they need no display and are skipped entirely if pygame is not installed. The engine gets the heaviest testing, since road detection, wall flattening, and carry limits are common sources of bugs, and an AI built on a buggy engine learns the bugs. Tak and Tinue span the engine and the terminal, so their tests live together in `tests/threats/`. Alongside hand-built positions, they check the results against brute force that plays out every move with the real engine.
+- **Tests mirror the source tree.** Each package gets a matching folder under `tests/`. The GUI tests run pygame headless on SDL's dummy video driver, so they need no display and are skipped entirely if pygame is not installed. The engine gets the heaviest testing, since road detection, wall flattening, and carry limits are common sources of bugs, and a computer player built on a buggy engine plays the bugs. Tak and Tinue span the engine and the terminal, so their tests live together in `tests/threats/`. Alongside hand-built positions, they check the results against brute force that plays out every move with the real engine.
 
 ## Development
 

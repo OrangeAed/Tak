@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import textwrap
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
+from tak.ai.base import Agent, player_headers
 from tak.cli.render import LEGEND, describe_result, render_board, render_status
 from tak.engine.board import BOARD_CONFIG
 from tak.engine.game import Game
+from tak.engine.moves import Move
 from tak.engine.notation import NotationError, format_move, game_to_ptn, parse_move
 from tak.engine.pieces import Color
 from tak.engine.rules import GameResult, IllegalMoveError
@@ -28,6 +30,10 @@ Directions are < (left), > (right), + (up), - (down), as seen with a1 at the bot
 On each player's first turn you place a flat stone of the OPPONENT's color.
 
 Commands: help, undo, moves (list legal moves), ptn (show the game so far), quit"""
+
+HELP_AGAINST_COMPUTER = """\
+The computer moves as soon as it is its turn. Against the computer, undo takes
+back your last move and the computer's reply, so it is your turn again."""
 
 
 def _prompt(game: Game) -> str:
@@ -53,19 +59,44 @@ def run(
     read: Callable[[str], str] = input,
     write: Callable[[str], None] = print,
     save_dir: Path | None = None,
+    players: Mapping[Color, Agent] | None = None,
 ) -> GameResult | None:
     """Play ``game`` until someone wins. Returns the result, or ``None`` if play was abandoned.
 
-    If ``save_dir`` is given, a finished game is saved there as a new PTN file.
-    Abandoned games are not saved.
+    ``players`` gives the computer player for either or both sides; moves for
+    the other sides are read from the person at the terminal. If ``save_dir``
+    is given, a finished game is saved there as a new PTN file. Abandoned
+    games are not saved.
     """
+    players = dict(players or {})
     write(f"Tak on a {game.size}x{game.size} board. Type 'help' for how to enter moves.")
+    for color, agent in players.items():
+        write(f"{color} is played by the computer: {agent.name}, which {agent.description}.")
     write(LEGEND)
 
     # "Tak!" or "Tinue!" if the move just played threatens to win next turn. It
     # is announced once, in the status shown straight after that move.
     call: str | None = None
     while game.result is None:
+        computer = players.get(game.to_move)
+        if computer is not None:
+            if call:
+                write(call)  # about the move just typed; the computer answers straight away
+            mover = game.to_move
+            opening = game.in_opening
+            game.play(computer.choose_move(game))
+            played = game.history[-1]
+            move_text = format_move(played.move, flattened=played.flattened)
+            if opening:
+                other = players.get(mover.opponent)
+                whom = other.name if other else "you"
+                flat = f"a {mover.opponent.value} flat stone"
+                write(f"{mover} ({computer.name}) places {flat} for {whom} on {move_text}.")
+            else:
+                write(f"{mover} ({computer.name}) plays {move_text}.")
+            call = threat_call(game, mover)
+            continue
+
         write("")
         write(render_board(game.board))
         write(render_status(game, call))
@@ -85,9 +116,12 @@ def run(
             return None
         if command in {"help", "h", "?"}:
             write(HELP)
+            if players:
+                write(HELP_AGAINST_COMPUTER)
         elif command in {"undo", "u"}:
-            if game.history:
-                write(f"Took back {format_move(game.undo())}.")
+            taken = _undo(game, players)
+            if taken:
+                write(f"Took back {' and '.join(format_move(move) for move in taken)}.")
             else:
                 write("There is nothing to undo.")
         elif command == "ptn":
@@ -111,9 +145,44 @@ def run(
     write("")
     write(f"Game over, {describe_result(game, game.result)}")
     write(f"Result: {game.result.ptn}")
+    verdict = _verdict(game.result, players)
+    if verdict:
+        write(verdict)
     if save_dir is not None:
-        write(save_finished_game(game, save_dir)[1])
+        write(save_finished_game(game, save_dir, headers=player_headers(players))[1])
     return game.result
+
+
+def _mover(ply: int) -> Color:
+    """Who made the move numbered ``ply`` (counting from 0)."""
+    return Color.WHITE if ply % 2 == 0 else Color.BLACK
+
+
+def _undo(game: Game, players: Mapping[Color, Agent]) -> list[Move]:
+    """Take back the person's last move, and any computer moves made since.
+
+    Returns the moves taken back, earliest first; empty if the person hasn't
+    moved yet. Without computer players, this is simply the last move.
+    """
+    if all(_mover(ply) in players for ply in range(game.ply)):
+        return []
+    taken: list[Move] = []
+    while True:
+        by_person = _mover(game.ply - 1) not in players
+        taken.append(game.undo())
+        if by_person:
+            break
+    taken.reverse()
+    return taken
+
+
+def _verdict(result: GameResult, players: Mapping[Color, Agent]) -> str | None:
+    """The last word when a person played the computer: who won, if anyone."""
+    if not players or len(players) == len(Color) or result.winner is None:
+        return None
+    if result.winner in players:
+        return f"{players[result.winner].name} wins."
+    return "You win!"
 
 
 def main(

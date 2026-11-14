@@ -9,8 +9,20 @@ from pathlib import Path
 
 import pytest
 
+from tak.ai import Agent
 from tak.cli.app import main, run
-from tak.engine import Color, Game, GameResult, Piece, PieceType, Reason, Square, game_from_ptn
+from tak.engine import (
+    Color,
+    Game,
+    GameResult,
+    Move,
+    Piece,
+    PieceType,
+    Reason,
+    Square,
+    game_from_ptn,
+    parse_move,
+)
 
 ROAD_GAME = ["a1", "a2", "b2", "a3", "c2"]  # on a 3x3 board: White wins with a2-b2-c2
 
@@ -254,3 +266,121 @@ class TestSaving:
     def test_run_alone_does_not_save(self, saves_dir: Path) -> None:
         play_script(ROAD_GAME)
         assert self.saved(saves_dir) == []
+
+
+class Scripted(Agent):
+    """A computer player that plays the PTN moves it is given, in order."""
+
+    key = "scripted"
+    name = "Scripty"
+    description = "plays the moves it is given"
+
+    def __init__(self, moves: list[str]) -> None:
+        super().__init__()
+        self.moves = iter(moves)
+
+    def pick(self, game: Game) -> Move:
+        return parse_move(next(self.moves))
+
+
+def play_computer(
+    lines: list[str], computer: dict[Color, list[str]], save_dir: Path | None = None
+) -> tuple[Game, GameResult | None, Session]:
+    """Play on 3x3 against scripted computer players for the sides in ``computer``."""
+    game = Game(3)
+    session = Session(lines)
+    players = {color: Scripted(moves) for color, moves in computer.items()}
+    result = run(game, session.read, session.write, save_dir=save_dir, players=players)
+    return game, result, session
+
+
+class TestAgainstTheComputer:
+    # On 3x3 White (the person) wins with a2-b2-c2; Black (the computer) plays a1, a3.
+    HUMAN_WINS = (["a1", "b2", "c2"], {Color.BLACK: ["a2", "a3"]})
+    # Black (the computer) wins with a2-b2-c2 (a2 placed for it by White) while the person
+    # plays White.
+    COMPUTER_WINS = (["a2", "a1", "b1"], {Color.BLACK: ["c3", "b2", "c2"]})
+
+    def test_the_computer_answers_by_itself(self) -> None:
+        game, result, session = play_computer(*self.HUMAN_WINS)
+        assert result == GameResult(Color.WHITE, Reason.ROAD)
+        assert len(session.prompts) == 3  # only the person's moves were asked for
+        assert [played.move for played in game.history][1::2] == [
+            parse_move("a2"),
+            parse_move("a3"),
+        ]
+
+    def test_the_computer_is_introduced_and_its_moves_announced(self) -> None:
+        _, _, session = play_computer(*self.HUMAN_WINS)
+        assert "Black is played by the computer: Scripty, which plays the moves it is given." in (
+            session.output
+        )
+        assert "Black (Scripty) places a white flat stone for you on a2." in session.output
+        assert "Black (Scripty) plays a3." in session.output
+
+    def test_the_board_is_shown_once_per_turn_not_before_the_computer_moves(self) -> None:
+        _, _, session = play_computer(*self.HUMAN_WINS)
+        assert session.text.count("Turn ") == 3  # once before each of the person's moves
+
+    def test_who_won(self) -> None:
+        _, _, session = play_computer(*self.HUMAN_WINS)
+        assert session.output[-1] == "You win!"
+        _, result, session = play_computer(*self.COMPUTER_WINS)
+        assert result == GameResult(Color.BLACK, Reason.ROAD)
+        assert session.output[-1] == "Scripty wins."
+
+    def test_the_computer_can_move_first(self) -> None:
+        game, _, session = play_computer(["c3", "quit"], {Color.WHITE: ["a1", "b1"]})
+        assert game.ply == 3
+        assert session.prompts == [
+            "Black, place a white flat stone for your opponent (e.g. a1) > ",
+            "Black > ",
+        ]
+        assert "White (Scripty) places a black flat stone for you on a1." in session.output
+
+    def test_a_threat_made_by_the_person_is_called_before_the_reply(self) -> None:
+        _, _, session = play_computer(["a1", "b2", "quit"], {Color.BLACK: ["a2", "c3"]})
+        call = session.output.index("Tak!")  # b2 lets White win at c2
+        assert session.output[call + 1] == "Black (Scripty) plays c3."
+
+    def test_a_threat_made_by_the_computer_is_called(self) -> None:
+        _, _, session = play_computer(["a2", "a1", "quit"], {Color.BLACK: ["c3", "b2"]})
+        assert "Tak!" in session.text.split("Black (Scripty) plays b2.")[1]  # c2 wins next
+
+    def test_undo_takes_back_the_reply_too(self) -> None:
+        game, _, session = play_computer(
+            ["a1", "b2", "undo", "c3", "quit"], {Color.BLACK: ["a2", "a3", "b3"]}
+        )
+        assert "Took back b2 and a3." in session.output
+        assert [played.move for played in game.history] == [
+            parse_move(move) for move in ("a1", "a2", "c3", "b3")
+        ]
+
+    def test_undo_when_only_the_computer_has_moved(self) -> None:
+        game, _, session = play_computer(["undo", "quit"], {Color.WHITE: ["a1"]})
+        assert "There is nothing to undo." in session.output
+        assert game.ply == 1
+
+    def test_undo_back_to_the_start(self) -> None:
+        game, _, session = play_computer(["c3", "undo", "quit"], {Color.WHITE: ["a1", "b1"]})
+        assert "Took back c3 and b1." in session.output
+        assert game.ply == 1  # the computer's opening move stays; it's the person's turn
+
+    def test_help_explains_playing_the_computer(self) -> None:
+        _, _, session = play_computer(["help", "quit"], {Color.BLACK: []})
+        assert "undo takes\nback your last move and the computer's reply" in session.text
+
+    def test_the_computer_can_play_both_sides(self) -> None:
+        white = ["a1", "b2", "c2"]
+        game, result, session = play_computer([], {Color.WHITE: white, Color.BLACK: ["a2", "a3"]})
+        assert result == GameResult(Color.WHITE, Reason.ROAD)
+        assert session.prompts == []
+        assert "White (Scripty) places a black flat stone for Scripty on a1." in session.output
+        assert "You win!" not in session.text and "Scripty wins." not in session.text
+
+    def test_saved_games_name_the_players(self, tmp_path: Path) -> None:
+        play_computer(*self.HUMAN_WINS, save_dir=tmp_path)
+        text = next(tmp_path.glob("*.ptn")).read_text(encoding="utf-8")
+        assert '[Player1 "Human"]' in text
+        assert '[Player2 "Scripty (computer)"]' in text
+        assert game_from_ptn(text).result == GameResult(Color.WHITE, Reason.ROAD)

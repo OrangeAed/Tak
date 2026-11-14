@@ -12,6 +12,8 @@ from any point if you like.
 - Step through the game with the panel's buttons, Ctrl+Left/Right (or
   Ctrl+Z/Y), and Ctrl+Home/End.
 - The window can be resized.
+- Against the computer (``python -m tak.play --gui``), it moves by itself
+  when its turn comes, thinking in the background (:mod:`tak.gui.computer`).
 
 All rules come from the engine; this module only draws and collects input.
 The event handling lives in :class:`Controller`, which takes one pygame event
@@ -30,8 +32,9 @@ from typing import Any
 from tak.engine.board import BOARD_CONFIG, Square
 from tak.engine.game import Game
 from tak.engine.notation import format_move
-from tak.engine.pieces import PieceType
+from tak.engine.pieces import Color, PieceType
 from tak.gui.clicks import MoveBuilder, touched_squares
+from tak.gui.computer import ComputerTurn, Position, position_of
 from tak.gui.session import BAD, GOOD, INFO, Feedback, GameSession
 from tak.saves import add_save_arguments, describe_path, saves_dir_from
 
@@ -55,6 +58,7 @@ class Controller:
         session: GameSession,
         window_size: tuple[int, int] | None = None,
         message: Feedback | None = None,
+        computer: ComputerTurn | None = None,
     ) -> None:
         import pygame
 
@@ -67,8 +71,12 @@ class Controller:
         self.builder = MoveBuilder()
         self.layout = render.layout_for(session.game.size, window_size or render.DEFAULT_WINDOW)
         self.fonts = render.Fonts.default()
-        self.camera = Camera()
         self.default_camera = Camera()
+        if session.players and Color.BLACK not in session.players:
+            self.default_camera = Camera().flipped()  # you play Black: sit on Black's side
+        self.camera = self.default_camera
+        self.computer = computer or ComputerTurn()
+        self.computer_failed: Position | None = None  # don't retry a position that failed
 
         self.typed = ""
         self.message: Feedback | None = message
@@ -182,6 +190,11 @@ class Controller:
         square = self.frame.square_at(pos)
         if square is None:
             return
+        refusal = self.session.computer_turn()
+        if refusal is not None:
+            self.builder.cancel()
+            self.message = refusal
+            return
         piece = self.place
         if mods & self.pg.KMOD_SHIFT:
             piece = PieceType.WALL
@@ -243,7 +256,11 @@ class Controller:
         self.typed = ""
 
     def update(self, seconds: float, pressed: Any) -> None:
-        """Per-frame work: held arrow keys turn (left/right) and tilt (up/down) the board."""
+        """Per-frame work: the computer's turn, then held arrow keys.
+
+        Held left/right turn the board, and up/down tilt it.
+        """
+        self.tick_computer()
         pg = self.pg
         if pg.key.get_mods() & pg.KMOD_CTRL:
             return  # Ctrl+arrows step through the game instead
@@ -252,6 +269,36 @@ class Controller:
         if turn or tilt:
             self.camera = self.camera.orbit(turn * KEY_SPEED * seconds, tilt * KEY_SPEED * seconds)
             self.dirty = True
+
+    def tick_computer(self) -> None:
+        """Start the computer's move when its turn comes, and play it once it's ready.
+
+        A move being worked out is dropped if the game moves on meanwhile (say,
+        by stepping back).
+        """
+        session, computer = self.session, self.computer
+        position = position_of(self.game)
+        if computer.busy and (not session.waiting_for_computer or computer.position != position):
+            computer.cancel()
+            self.dirty = True
+        agent = session.computer_to_move
+        if not computer.busy and session.waiting_for_computer and position != self.computer_failed:
+            assert agent is not None
+            computer.start(agent, self.game)
+            self.dirty = True
+        if not computer.busy:
+            return
+        name = agent.name if agent else "The computer"
+        try:
+            move = computer.result()
+            if move is None:
+                return  # still thinking
+            self.builder.cancel()
+            self.message = session.play_computer(move)
+        except Exception as exc:  # a broken player shouldn't take the window down with it
+            self.computer_failed = position
+            self.message = BAD, f"{name} couldn't choose a move: {exc}"
+        self.dirty = True
 
     def resize(self, size: tuple[int, int]) -> tuple[int, int]:
         """Fit the layout to a new window size; returns the size actually used.
@@ -302,9 +349,16 @@ class Controller:
                 ply=game.ply,
                 total=self.session.total,
                 last_move=last_move,
+                versus=self.session.versus_text(),
+                thinking=self._thinking_text(),
+                your_turn=self.session.computer_to_move is None,
             ),
         )
         self.dirty = False
+
+    def _thinking_text(self) -> str | None:
+        agent = self.computer.agent
+        return f"{agent.name} is thinking\u2026" if self.computer.busy and agent else None
 
 
 def run(session: GameSession, message: Feedback | None = None) -> None:
@@ -318,6 +372,8 @@ def run(session: GameSession, message: Feedback | None = None) -> None:
     title = f"Tak {session.game.size}\u00d7{session.game.size}"
     if session.source is not None:
         title += f" \u2013 {session.source.name}"
+    if session.players:
+        title += f" \u2013 {session.versus_text()}"
     pygame.display.set_caption(title)
     clock = pygame.time.Clock()
 

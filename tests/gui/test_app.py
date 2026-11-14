@@ -5,6 +5,9 @@ from __future__ import annotations
 import math
 import subprocess
 import sys
+import threading
+import time
+from collections import defaultdict
 from pathlib import Path
 
 import pygame
@@ -13,7 +16,11 @@ import pytest
 from tak.engine import Color, Game, Piece, PieceType, Square, game_to_ptn, parse_move
 from tak.gui import render
 from tak.gui.app import DRAG_THRESHOLD, Controller, main
-from tak.gui.session import BAD, GameSession
+from tak.gui.computer import ComputerTurn
+from tak.gui.scene import Camera
+from tak.gui.session import BAD, INFO, GameSession
+
+from .conftest import Scripted
 
 ROAD_WIN = ["a1", "c3", "b1", "b3", "b2", "a3", "c2"]
 
@@ -356,3 +363,138 @@ def test_run_as_a_module() -> None:
     assert completed.returncode == 0, completed.stderr
     assert "python -m tak.gui" in completed.stdout
     assert "--load" in completed.stdout and "--size" in completed.stdout
+
+
+class TestAgainstTheComputer:
+    """The computer moves by itself, in the background, only at the latest position."""
+
+    NOTHING_PRESSED: dict[int, int] = defaultdict(int)
+
+    def window(self, threaded: bool = False, **players: Scripted) -> Window:
+        session = GameSession(Game(3), players={Color(c): agent for c, agent in players.items()})
+        window = Window(session)
+        window.controller.computer = ComputerTurn(min_thinking=0, threaded=threaded)
+        return window
+
+    def tick(self, window: Window, frames: int = 1) -> None:
+        for _ in range(frames):
+            window.controller.update(1 / 60, self.NOTHING_PRESSED)
+            if window.controller.dirty:
+                window.draw()
+
+    def test_the_computer_moves_when_its_turn_comes(self) -> None:
+        window = self.window(black=Scripted("c3", "b3"))
+        window.click_square("a1")
+        assert window.game.ply == 1
+        self.tick(window)
+        assert window.game.ply == 2
+        assert window.controller.message == (INFO, "Scripty placed a white flat on c3 for you.")
+        self.tick(window, 5)
+        assert window.game.ply == 2  # now it waits for the person
+
+    def test_the_computer_can_move_first(self) -> None:
+        window = self.window(white=Scripted("a1"))
+        self.tick(window)
+        assert [played.move for played in window.game.history] == [parse_move("a1")]
+
+    def test_clicks_and_typing_wait_for_the_computer(self) -> None:
+        window = self.window(black=Scripted("c3"))
+        window.click_square("a1")
+        window.click_square("b2")  # before the computer has moved
+        assert window.game.ply == 1
+        kind, text = window.controller.message
+        assert kind == BAD and "Scripty's turn" in text
+        window.type("b2")
+        assert window.game.ply == 1
+
+    def test_you_cant_lift_the_computers_stacks(self) -> None:
+        window = self.window(black=Scripted("c3"))
+        window.click_square("a1")  # a black flat: the computer's stone
+        window.click_square("a1")
+        assert window.controller.builder.lift is None
+
+    def test_the_piece_chooser_is_only_shown_on_your_turn(self) -> None:
+        window = self.window(black=Scripted("c3"))
+        assert "place:F" in window.controller.frame.buttons
+        window.click_square("a1")
+        assert "place:F" not in window.controller.frame.buttons
+        self.tick(window)
+        assert "place:F" in window.controller.frame.buttons
+
+    def test_the_view_is_from_your_side(self) -> None:
+        assert self.window(white=Scripted()).controller.default_camera == Camera().flipped()
+        assert self.window(black=Scripted()).controller.default_camera == Camera()
+        assert Window().controller.default_camera == Camera()
+
+    def test_the_panel_says_who_plays_whom_and_when_the_computer_thinks(self) -> None:
+        gate = threading.Event()
+        window = self.window(threaded=True, white=Scripted("a1", gate=gate))
+        assert window.controller._thinking_text() is None
+        self.tick(window)
+        assert window.controller._thinking_text() == "Scripty is thinking\u2026"
+        window.draw()  # the panel draws the extra lines without trouble
+        gate.set()
+        deadline = time.monotonic() + 5
+        while window.game.ply == 0 and time.monotonic() < deadline:
+            self.tick(window)
+            time.sleep(0.005)
+        assert window.game.ply == 1
+        assert window.controller._thinking_text() is None
+
+    def test_stepping_back_while_it_thinks_cancels_the_move(self) -> None:
+        gate = threading.Event()
+        window = self.window(threaded=True, black=Scripted("c3", "b3", gate=gate))
+        window.click_square("a1")
+        self.tick(window)
+        assert window.controller.computer.busy
+        window.key(pygame.K_z, mod=pygame.KMOD_CTRL)  # step back to the start
+        self.tick(window)
+        assert not window.controller.computer.busy
+        gate.set()
+        time.sleep(0.05)
+        self.tick(window, 3)
+        assert window.game.ply == 0  # its answer was thrown away
+
+    def test_the_computer_waits_while_you_step_through_the_game(self) -> None:
+        window = self.window(black=Scripted("c3", "b3"))
+        window.click_square("a1")
+        self.tick(window)
+        window.click_square("b2")
+        self.tick(window)
+        assert window.game.ply == 4
+        window.click_button("nav:back")  # the computer's turn, with b3 still ahead
+        self.tick(window, 3)
+        assert window.game.ply == 3 and window.controller.session.total == 4
+        window.click_button("nav:end")
+        self.tick(window, 3)
+        assert window.game.ply == 4
+
+    def test_playing_on_from_earlier_gets_an_answer(self) -> None:
+        window = self.window(black=Scripted("c3", "b3", "a3"))
+        window.click_square("a1")
+        self.tick(window)
+        window.click_square("b2")
+        self.tick(window)
+        window.click_button("nav:back")
+        window.click_button("nav:back")  # back to White's second move
+        window.click_square("c1")  # replaces b2 (and the reply b3)
+        self.tick(window)
+        moves = [played.move for played in window.game.history]
+        assert moves == [parse_move(m) for m in ("a1", "c3", "c1", "a3")]
+
+    def test_a_computer_that_fails_is_reported_once(self) -> None:
+        agent = Scripted()  # has no moves to give
+        window = self.window(white=agent)
+        self.tick(window, 3)
+        kind, text = window.controller.message
+        assert kind == BAD and text == "Scripty couldn't choose a move: out of moves"
+        assert agent.calls == 1
+        assert window.game.ply == 0
+
+    def test_an_illegal_move_from_the_computer_is_reported(self) -> None:
+        window = self.window(black=Scripted("a1"))  # a1 is taken by then
+        window.click_square("a1")
+        self.tick(window, 3)
+        kind, text = window.controller.message
+        assert kind == BAD and text.startswith("Scripty couldn't choose a move: a1 is already")
+        assert window.game.ply == 1

@@ -128,3 +128,12 @@ class TestSaveFinishedGame:
         path, message = saves.save_finished_game(finished, blocker)
         assert path is None
         assert message.startswith("Could not save the game")
+
+    def test_extra_headers_are_written(self, finished: Game, tmp_path: Path) -> None:
+        headers = {"Player1": "Human", "Player2": "Greedy (computer)"}
+        path, _ = saves.save_finished_game(finished, tmp_path, headers=headers)
+        assert path is not None
+        text = path.read_text(encoding="utf-8")
+        assert '[Player1 "Human"]' in text and '[Player2 "Greedy (computer)"]' in text
+        assert '[Date "' in text  # the usual headers are still there
+        assert len(game_from_ptn(text).history) == len(finished.history)

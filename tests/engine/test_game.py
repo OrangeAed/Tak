@@ -359,3 +359,33 @@ def test_history_records_the_moves_played(started: Started) -> None:
 def test_ptn_output_for_a_short_game(started: Started) -> None:
     game = started("a1 a2 b2 a3 c2", size=3)
     assert game_to_ptn(game).endswith("3. c2 R-0\n")
+
+
+class TestCopy:
+    def test_a_copy_is_the_same_position(self, started: Started, snapshot: Snapshot) -> None:
+        game = started("a1 e5 Cc3 d3")
+        assert snapshot(game.copy()) == snapshot(game)
+        assert game_to_ptn(game.copy()) == game_to_ptn(game)
+
+    def test_playing_on_a_copy_leaves_the_original_alone(
+        self, started: Started, snapshot: Snapshot
+    ) -> None:
+        game = started("a1 e5 Cc3 d3")
+        before = snapshot(game)
+        copy = game.copy()
+        copy.play(parse_move("c3>"))
+        copy.undo()
+        copy.undo()
+        copy.play(parse_move("b2"))
+        assert snapshot(game) == before
+        assert game.history[-1].move == parse_move("d3")
+
+    def test_playing_on_the_original_leaves_the_copy_alone(
+        self, started: Started, snapshot: Snapshot
+    ) -> None:
+        game = started("a1 a2 b2 a3", size=3)
+        copy = game.copy()
+        before = snapshot(copy)
+        game.play(parse_move("c2"))  # a road: the original is over
+        assert game.is_over and not copy.is_over
+        assert snapshot(copy) == before

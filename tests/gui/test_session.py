@@ -6,8 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from tak.engine import Game, Square, game_to_ptn, parse_move, parse_ptn
+from tak.engine import Color, Game, Square, game_to_ptn, parse_move, parse_ptn
 from tak.gui.session import BAD, GOOD, INFO, GameRecorder, GameSession
+
+from .conftest import Scripted
 
 # White completes a road from b1 up to c3 with c2.
 ROAD_WIN = ["a1", "c3", "b1", "b3", "b2", "a3", "c2"]
@@ -201,3 +203,88 @@ class TestGameRecorder:
         session = played(*ROAD_WIN)
         kind, message = recorder.after_move(session.game) or ("", "")
         assert kind == BAD and "Could not save the game" in message
+
+
+class TestAgainstTheComputer:
+    def session(self, **players: Scripted) -> GameSession:
+        return GameSession(
+            Game(3), players={Color(color): agent for color, agent in players.items()}
+        )
+
+    def test_whose_turn(self) -> None:
+        session = self.session(black=Scripted("c3"))
+        assert session.computer_to_move is None and not session.waiting_for_computer
+        session.play_text("a1")
+        assert session.computer_to_move is session.players[Color.BLACK]
+        assert session.waiting_for_computer
+
+    def test_who_plays_whom(self) -> None:
+        assert self.session(black=Scripted()).versus_text() == "You play White against Scripty"
+        assert self.session(white=Scripted()).versus_text() == "You play Black against Scripty"
+        assert GameSession(Game(3)).versus_text() is None
+
+    def test_a_person_cant_move_for_the_computer(self) -> None:
+        session = self.session(white=Scripted())
+        for attempt in (lambda: session.play(parse_move("a1")), lambda: session.play_text("a1")):
+            kind, text = attempt()  # type: ignore[misc]
+            assert kind == BAD and "It's Scripty's turn (White)" in text
+        assert session.game.ply == 0
+
+    def test_the_computers_moves_are_announced(self) -> None:
+        session = self.session(black=Scripted())
+        session.play_text("a1")
+        assert session.play_computer(parse_move("c3")) == (
+            INFO,
+            "Scripty placed a white flat on c3 for you.",
+        )
+        session.play_text("b2")
+        assert session.play_computer(parse_move("b3")) == (INFO, "Scripty played b3.")
+
+    def test_a_threat_by_the_computer_is_called(self) -> None:
+        session = self.session(black=Scripted())
+        session.play_text("a2")  # a black flat for the computer
+        session.play_computer(parse_move("c3"))
+        session.play_text("a1")
+        assert session.play_computer(parse_move("b2")) == (GOOD, "Scripty played b2. Tak!")
+
+    def test_only_on_the_computers_turn_at_the_latest_position(self) -> None:
+        session = self.session(black=Scripted())
+        with pytest.raises(ValueError, match="isn't the computer's turn"):
+            session.play_computer(parse_move("a1"))
+        session.play_text("a1")
+        session.play_computer(parse_move("c3"))
+        session.back()
+        assert session.computer_to_move is not None and not session.waiting_for_computer
+        with pytest.raises(ValueError):
+            session.play_computer(parse_move("c3"))
+
+    def test_stepping_back_to_the_computers_turn(self) -> None:
+        session = self.session(black=Scripted())
+        session.play_text("a1")
+        session.play_computer(parse_move("c3"))
+        session.back()
+        kind, text = session.play_text("b3")  # type: ignore[misc]
+        assert kind == BAD and "Step forward, or back to one of your turns" in text
+
+    def test_playing_on_from_earlier_lets_the_computer_answer(self) -> None:
+        session = self.session(black=Scripted())
+        session.play_text("a1")
+        session.play_computer(parse_move("c3"))
+        session.play_text("b2")
+        session.play_computer(parse_move("a3"))
+        session.back()
+        session.back()
+        assert session.play_text("b1") is None  # replaces b2 and a3
+        assert session.total == 3 and session.waiting_for_computer
+
+    def test_a_game_won_by_the_computer_is_saved_with_the_players(self, tmp_path: Path) -> None:
+        session = GameSession(Game(3), tmp_path, {Color.BLACK: Scripted()})
+        session.play_text("a2")
+        session.play_computer(parse_move("c3"))
+        session.play_text("a1")
+        session.play_computer(parse_move("b2"))
+        session.play_text("b1")
+        kind, text = session.play_computer(parse_move("c2"))
+        assert kind == INFO and text.startswith("Scripty played c2. Game saved to ")
+        text = next(tmp_path.glob("*.ptn")).read_text(encoding="utf-8")
+        assert '[Player1 "Human"]' in text and '[Player2 "Scripty (computer)"]' in text

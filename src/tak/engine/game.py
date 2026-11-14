@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 
@@ -94,6 +95,18 @@ class Game:
 
     def legal_moves(self) -> list[Move]:
         return legal_moves(self)
+
+    def copy(self) -> Game:
+        """An independent copy: playing or undoing moves on it leaves this game alone.
+
+        Useful for looking ahead (or thinking in another thread) without
+        touching the game being played.
+        """
+        clone = copy.copy(self)
+        clone.board = self.board.copy()
+        clone.reserves = dict(self.reserves)
+        clone.history = list(self.history)  # the entries themselves are never changed
+        return clone
 
     # --- Threats ("Tak" and "Tinue") --------------------------------------------
 

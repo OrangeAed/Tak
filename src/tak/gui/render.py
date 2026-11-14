@@ -148,6 +148,9 @@ class Controls:
     ply: int = 0  # moves played to reach the position shown
     total: int = 0  # moves in the game, counting any after the position shown
     last_move: str | None = None
+    versus: str | None = None  # who plays whom, against the computer
+    thinking: str | None = None  # shown while the computer works out its move
+    your_turn: bool = True  # False on the computer's turn: no piece chooser then
 
 
 @dataclass
@@ -493,7 +496,7 @@ def draw_panel(
     bottom = nav.top - 10
 
     # What a click on an empty square places.
-    if not game.is_over:
+    if not game.is_over and controls.your_turn:
         owner = game.to_move.opponent if game.in_opening else game.to_move
         reserve = game.reserve(owner)
         choices = [PieceType.FLAT] if game.in_opening else [PieceType.FLAT, PieceType.WALL]
@@ -528,6 +531,10 @@ def draw_panel(
     if controls.last_move:
         status.append(f"Last move: {controls.last_move}")
     lines = [(part, TEXT) for line in status for part in _wrap(line, fonts.text, width)]
+    if controls.versus:
+        lines[:0] = [(part, TEXT_DIM) for part in _wrap(controls.versus, fonts.text, width)]
+    if controls.thinking:
+        lines += [(part, ACCENT) for part in _wrap(controls.thinking, fonts.text, width)]
     if message:
         lines += [(part, message_color) for part in _wrap(message, fonts.text, width)]
     for text, tint in lines:

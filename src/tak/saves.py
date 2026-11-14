@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -62,9 +63,14 @@ def save_name(game: Game, when: datetime) -> str:
     return f"{stamp}_{game.size}x{game.size}_{outcome_slug(game)}{SUFFIX}"
 
 
-def game_text(game: Game, when: datetime) -> str:
-    """The PTN written to a save file: the game plus when it was played."""
-    return game_to_ptn(game, {"Date": when.strftime("%Y.%m.%d"), "Time": when.strftime("%H:%M:%S")})
+def game_text(game: Game, when: datetime, headers: Mapping[str, str] | None = None) -> str:
+    """The PTN written to a save file: the game plus when it was played.
+
+    ``headers`` adds more PTN headers, such as ``Player1`` and ``Player2``.
+    """
+    lines = {"Date": when.strftime("%Y.%m.%d"), "Time": when.strftime("%H:%M:%S")}
+    lines.update(headers or {})
+    return game_to_ptn(game, lines)
 
 
 def save_game(
@@ -73,17 +79,18 @@ def save_game(
     *,
     when: datetime | None = None,
     replace: Path | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> Path:
     """Write ``game`` as PTN and return the path of the file written.
 
     A new file is created in ``directory`` (default: :func:`default_saves_dir`,
     created if missing), never overwriting an existing one. Pass ``replace``
     to rewrite a file saved earlier instead, for when the same game is
-    finished again after an undo. Raises :class:`OSError` if the file can't be
-    written.
+    finished again after an undo. ``headers`` adds PTN headers (see
+    :func:`game_text`). Raises :class:`OSError` if the file can't be written.
     """
     when = when or datetime.now()
-    text = game_text(game, when)
+    text = game_text(game, when, headers)
     if replace is not None:
         replace.write_text(text, encoding="utf-8")
         return replace
@@ -114,7 +121,10 @@ def describe_path(path: Path) -> str:
 
 
 def save_finished_game(
-    game: Game, directory: Path | None, replace: Path | None = None
+    game: Game,
+    directory: Path | None,
+    replace: Path | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> tuple[Path | None, str]:
     """Save ``game`` and return the path (``None`` on failure) and a line for the player.
 
@@ -123,7 +133,7 @@ def save_finished_game(
     reported in the message instead.
     """
     try:
-        path = save_game(game, directory, replace=replace)
+        path = save_game(game, directory, replace=replace, headers=headers)
     except OSError as exc:
         return None, f"Could not save the game: {exc}"
     return path, f"Game saved to {describe_path(path)}"
