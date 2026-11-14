@@ -252,29 +252,64 @@ class TestAgainstTheComputer:
         with pytest.raises(ValueError, match="isn't the computer's turn"):
             session.play_computer(parse_move("a1"))
         session.play_text("a1")
-        session.play_computer(parse_move("c3"))
-        session.back()
+        session.future.append(parse_move("c3"))  # its turn, but with a move already ahead
         assert session.computer_to_move is not None and not session.waiting_for_computer
         with pytest.raises(ValueError):
             session.play_computer(parse_move("c3"))
 
-    def test_stepping_back_to_the_computers_turn(self) -> None:
+    def test_stepping_is_one_move_at_a_time_as_in_any_game(self) -> None:
+        session = self.session(black=Scripted())
+        session.play_text("a1")
+        session.play_computer(parse_move("c3"))
+        session.play_text("b2")
+        session.play_computer(parse_move("b3"))
+        assert session.back() and session.game.ply == 3
+        assert session.back() and session.game.ply == 2
+        assert session.forward() and session.game.ply == 3
+        session.to_start()
+        assert session.game.ply == 0
+        session.to_end()
+        assert session.game.ply == 4 and not session.forward()
+
+    def test_the_computer_waits_at_an_earlier_turn_of_its_own(self) -> None:
         session = self.session(black=Scripted())
         session.play_text("a1")
         session.play_computer(parse_move("c3"))
         session.back()
+        assert session.computer_to_move is not None and not session.waiting_for_computer
+        kind, text = session.position_note()  # type: ignore[misc]
+        assert kind == INFO
+        assert text == (
+            "Scripty (Black) moves next. Step forward to see its move, "
+            "or back to your turn to play something different."
+        )
         kind, text = session.play_text("b3")  # type: ignore[misc]
-        assert kind == BAD and "Step forward, or back to one of your turns" in text
+        assert kind == BAD and "Step forward to see its move" in text
+        assert session.game.ply == 1
+
+    def test_no_note_elsewhere(self) -> None:
+        session = self.session(black=Scripted())
+        assert session.position_note() is None  # your turn
+        session.play_text("a1")
+        assert session.position_note() is None  # the computer's turn, at the end: it moves
+        assert played("a1", "c3").position_note() is None  # no computer
+
+    def test_playing_black_the_computers_opening_can_be_stepped_back_over(self) -> None:
+        session = self.session(white=Scripted())
+        session.play_computer(parse_move("a1"))
+        assert session.back() and session.game.ply == 0
+        assert session.position_note() is not None
+        assert session.forward() and session.game.ply == 1
 
     def test_playing_on_from_earlier_lets_the_computer_answer(self) -> None:
         session = self.session(black=Scripted())
         session.play_text("a1")
         session.play_computer(parse_move("c3"))
         session.play_text("b2")
-        session.play_computer(parse_move("a3"))
+        session.play_computer(parse_move("b3"))
         session.back()
         session.back()
-        assert session.play_text("b1") is None  # replaces b2 and a3
+        assert session.play_text("b1") is None  # replaces b2 and b3, as in any game
         assert session.total == 3 and session.waiting_for_computer
 
     def test_a_game_won_by_the_computer_is_saved_with_the_players(self, tmp_path: Path) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import threading
 import time
 
@@ -71,7 +72,7 @@ class TestWithoutAThread:
         class Meddler(Agent):
             key = name = description = "meddler"
 
-            def pick(self, game: Game) -> Move:
+            def pick(self, game: Game, rng: random.Random) -> Move:
                 game.play(parse_move("c3"))  # scribbles on the game it was given
                 return parse_move("b2")
 

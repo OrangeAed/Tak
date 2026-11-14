@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import subprocess
 import sys
 from collections.abc import Callable
@@ -9,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from tak.ai import Agent
+from tak.ai import Agent, make_agent
 from tak.cli.app import main, run
 from tak.engine import (
     Color,
@@ -279,7 +280,7 @@ class Scripted(Agent):
         super().__init__()
         self.moves = iter(moves)
 
-    def pick(self, game: Game) -> Move:
+    def pick(self, game: Game, rng: random.Random) -> Move:
         return parse_move(next(self.moves))
 
 
@@ -355,6 +356,29 @@ class TestAgainstTheComputer:
         assert [played.move for played in game.history] == [
             parse_move(move) for move in ("a1", "a2", "c3", "b3")
         ]
+
+    @pytest.mark.parametrize("key", ["random", "greedy", "strategist"])
+    def test_undo_and_replay_brings_the_same_reply(self, key: str) -> None:
+        game = Game(5)
+        placed: list[str] = []
+        first_time: list[Move] = []
+        steps = iter(["place", "place", "place", "undo", "undo", "1", "2", "quit"])
+
+        def read(_prompt: str) -> str:
+            step = next(steps)
+            if step == "place":  # the first empty square, whatever the computer did
+                board = game.board
+                placed.append(next(s.name for s in board.squares() if not board.stack(s)))
+                return placed[-1]
+            if step == "undo" and not first_time:
+                first_time.extend(played.move for played in game.history)
+            if step.isdigit():  # play one of the moves taken back again
+                return placed[int(step)]
+            return step
+
+        run(game, read, lambda _text: None, players={Color.BLACK: make_agent(key)})
+        assert len(first_time) == 6
+        assert [played.move for played in game.history] == first_time
 
     def test_undo_when_only_the_computer_has_moved(self) -> None:
         game, _, session = play_computer(["undo", "quit"], {Color.WHITE: ["a1"]})

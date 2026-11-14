@@ -245,7 +245,7 @@ class Controller:
         self.builder.cancel()
         self.session.cancel_pending()
         action()
-        self.message = None
+        self.message = self.session.position_note()
 
     def cancel(self) -> None:
         """Esc or right-click: drop whatever is in progress."""

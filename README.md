@@ -80,7 +80,7 @@ python -m tak.play -b random -c black -s 4 --gui    # in the window
 | `-c`, `--color` | `white`, `black`, or `random`: the color *you* play. White moves first | `white` |
 | `-s`, `--size` | 3 to 8 | 5 |
 | `--gui` | play in the 3D window instead of the terminal (needs the gui extra) | terminal |
-| `--seed N` | make the computer's choices (and a random color) repeatable | |
+| `--seed N` | fix the computer's choices (and a random color) across games, see below | |
 
 `--saves-dir DIR` and `--no-save` work as for the other commands. The same game can be started from Python:
 
@@ -91,17 +91,17 @@ play_against_bot(bot="strategist", color="random", size=6)  # in the terminal
 play_against_bot(bot="greedy", color="black", gui=True)  # in the window
 ```
 
-**The opponents.** All three are ordinary code following fixed rules. None learns, trains, or plays against itself. Chance comes into Random's moves, Greedy's weighted picks, and how Strategist breaks ties, and `--seed` fixes all of it, so a game can be repeated.
+**The opponents.** All three are ordinary code following fixed rules. None learns, trains, or plays against itself. **The same position always gets the same move.** Chance comes into Random's moves, Greedy's weighted picks, and how Strategist breaks ties. Each choice is drawn from the position itself, mixed with a seed the bot picks at the start of the game. Within a game, taking moves back and playing them again (or reaching a position by another order of moves) always brings the same reply. A new game gets a new seed, so Random and Greedy play differently from game to game. With `--seed N`, every game uses that seed, so the bot always plays the same move in the same position.
 
 - **Random** plays a legal move chosen at random.
 - **Greedy** takes a win if one is available, and otherwise blocks your win if you have one. Failing both, it picks a move at random, weighted heavily (4× per square) toward moves that gain squares topped by its flat stones or capstones. It never plays a move that lets you win next turn when another move avoids that.
 - **Strategist** also takes a win and blocks yours. Next it looks for a move that makes Tinue, a threat you can't stop, and plays it. Otherwise it plays the move that leaves the best position by a weighted score. The score counts the length of its longest road against yours, how close each of you is to completing a road, control of the center, the number of squares controlled, and the flat count (which matters more as the game nears its end). Making a threat (Tak) earns a bonus. Like Greedy, it never hands you a win it could avoid.
 
-On the first turn Greedy and Strategist put your stone in a corner, the usual choice. In matches (see `scripts/play_match.py` below), Greedy beats Random almost every game, and Strategist beats Greedy almost every game on every board size. Strategist thinks longest: on 5x5 it typically answers in under a tenth of a second and at most a few tenths. On 7x7 and 8x8 it averages about a quarter of a second, with the odd move taking up to a second.
+On the first turn Greedy and Strategist put your stone in a corner, the usual choice. In matches (see `scripts/play_match.py` below), Greedy beats Random almost every game, and Strategist beats Greedy almost every game on every board size. Strategist thinks longest. On 5x5 it typically answers in under a tenth of a second, with the odd complicated position taking a second or so. On 7x7 and 8x8 it averages about a quarter of a second, with the odd move taking a second or two.
 
 **In the terminal**, the computer's moves are announced as it makes them (`Black (Strategist) plays c3.`), followed by "Tak!" or "Tinue!" when they threaten. `undo` takes back your last move along with the computer's reply, so it's your turn again.
 
-**In the window**, the computer moves by itself when its turn comes; the panel says who is playing whom and shows when the computer is thinking. The view starts from your side of the board. It thinks in the background, so you can still turn the board or step through the game meanwhile. It only moves at the latest position: step back and it waits; play a new move from an earlier position and it answers that one.
+**In the window**, the computer moves by itself when its turn comes; the panel says who is playing whom and shows when the computer is thinking. The view starts from your side of the board. It thinks in the background, so you can still turn the board or step through the game meanwhile. Stepping through the game works exactly as it does in any other game: one move at a time, with the same buttons and keys. The computer only moves by itself at the latest position, so it waits while you look back. To take back a move, step back to your turn and play something else. As in any game, that replaces the later moves, and the computer answers your new move. If you stop on one of the computer's earlier turns, the panel says so. Step forward to see its move, which is the move it would make there again, or step back to your own turn.
 
 Saved games against the computer record who played which side in PTN's `Player1` (White) and `Player2` (Black) headers.
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import random
 import threading
 
 import pytest
@@ -39,7 +40,7 @@ class Scripted(Agent):
         self.gate = gate
         self.calls = 0
 
-    def pick(self, game: Game) -> Move:
+    def pick(self, game: Game, rng: random.Random) -> Move:
         self.calls += 1
         if self.gate is not None:
             self.gate.wait(timeout=10)

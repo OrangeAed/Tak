@@ -13,6 +13,7 @@ from pathlib import Path
 import pygame
 import pytest
 
+from tak.ai import make_agent
 from tak.engine import Color, Game, Piece, PieceType, Square, game_to_ptn, parse_move
 from tak.gui import render
 from tak.gui.app import DRAG_THRESHOLD, Controller, main
@@ -455,21 +456,25 @@ class TestAgainstTheComputer:
         self.tick(window, 3)
         assert window.game.ply == 0  # its answer was thrown away
 
-    def test_the_computer_waits_while_you_step_through_the_game(self) -> None:
+    def test_stepping_is_one_move_at_a_time(self) -> None:
         window = self.window(black=Scripted("c3", "b3"))
         window.click_square("a1")
         self.tick(window)
         window.click_square("b2")
         self.tick(window)
         assert window.game.ply == 4
-        window.click_button("nav:back")  # the computer's turn, with b3 still ahead
+        window.key(pygame.K_z, mod=pygame.KMOD_CTRL)
         self.tick(window, 3)
         assert window.game.ply == 3 and window.controller.session.total == 4
+        kind, text = window.controller.message
+        assert kind == INFO and text.startswith("Scripty (Black) moves next.")
+        window.key(pygame.K_z, mod=pygame.KMOD_CTRL)
+        assert window.game.ply == 2 and window.controller.message is None
         window.click_button("nav:end")
         self.tick(window, 3)
         assert window.game.ply == 4
 
-    def test_playing_on_from_earlier_gets_an_answer(self) -> None:
+    def test_play_something_else_from_your_earlier_turn(self) -> None:
         window = self.window(black=Scripted("c3", "b3", "a3"))
         window.click_square("a1")
         self.tick(window)
@@ -481,6 +486,28 @@ class TestAgainstTheComputer:
         self.tick(window)
         moves = [played.move for played in window.game.history]
         assert moves == [parse_move(m) for m in ("a1", "c3", "c1", "a3")]
+
+    @pytest.mark.parametrize("bot", ["random", "greedy", "strategist"])
+    def test_replaying_your_moves_brings_the_same_replies(self, bot: str) -> None:
+        session = GameSession(Game(5), players={Color.BLACK: make_agent(bot)})
+        window = Window(session)
+        window.controller.computer = ComputerTurn(min_thinking=0, threaded=False)
+        yours = []
+        for _ in range(3):  # place on the first empty square, whatever the computer did
+            name = next(
+                s.name for s in window.game.board.squares() if not window.game.board.stack(s)
+            )
+            yours.append(name)
+            window.click_square(name)
+            self.tick(window)
+        first_time = [played.move for played in window.game.history]
+        assert len(first_time) == 6
+        for _ in range(4):  # back over a reply, your third move, a reply, your second
+            window.click_button("nav:back")
+        for name in yours[1:]:
+            window.click_square(name)
+            self.tick(window)
+        assert [played.move for played in window.game.history] == first_time
 
     def test_a_computer_that_fails_is_reported_once(self) -> None:
         agent = Scripted()  # has no moves to give

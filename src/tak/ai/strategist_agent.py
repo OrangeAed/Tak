@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 
 from tak.ai.base import Agent, opening_move
@@ -50,16 +51,16 @@ class StrategistAgent(Agent):
         super().__init__(seed)
         self.weights = weights
 
-    def pick(self, game: Game) -> Move:
+    def pick(self, game: Game, rng: random.Random) -> Move:
         if game.in_opening:
-            return opening_move(game, self.rng)
+            return opening_move(game, rng)
         me = game.to_move
         win = find_win(game, me)
         if win is not None:
             return win
 
         moves = game.legal_moves()
-        self.rng.shuffle(moves)  # so ties go to a random one of the best
+        rng.shuffle(moves)  # so ties go to a random one of the best
         threats: list[Move] = []  # opponent wins seen so far, tried first next time
         options = [self._consider(game, move, threats) for move in moves]
         safe = [option for option in options if option.safe]

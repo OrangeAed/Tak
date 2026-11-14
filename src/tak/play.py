@@ -72,7 +72,10 @@ def play_against_bot(
       ``random``. The computer plays the other.
     - ``size``: the board size, 3 to 8.
     - ``gui``: play in the 3D window (needs pygame) instead of the terminal.
-    - ``seed``: makes the computer's choices (and a random color) repeatable.
+    - ``seed``: fixes the computer's choices for good (and a random color). In
+      any one game the computer always plays the same move in the same
+      position; without a seed, a new game may play differently, while with
+      the same seed every game does the same.
     - ``save_dir`` / ``save``: where the finished game is saved (default: the
       usual saves folder), or ``save=False`` to not save it.
     - ``read`` / ``write``: how the terminal game gets input and shows output.
@@ -147,7 +150,8 @@ def main(
     parser.add_argument(
         "--seed",
         type=int,
-        help="make the computer's choices (and a random color) repeatable",
+        help="fix the computer's choices (and a random color) across games; within one game "
+        "it always plays the same move in the same position anyway",
     )
     add_save_arguments(parser)
     args = parser.parse_args(argv)

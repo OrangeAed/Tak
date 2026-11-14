@@ -14,9 +14,12 @@ A session can also have computer players (:mod:`tak.ai`) for one or both
 sides. The session refuses moves made for them by hand, and plays the moves
 they choose with :meth:`GameSession.play_computer`. Working out the move is
 left to the window (see :mod:`tak.gui.computer`), which does it in the
-background. The computer only moves at the latest position: while you step
-back through the game it waits, and if you play a new move from an earlier
-position, it answers that.
+background. Stepping through the game works the same as without a computer:
+one move at a time. The computer only moves by itself at the latest position,
+so it waits while you step back. Playing a new move from an earlier position
+replaces the later moves, as always, and the computer answers it. Computer
+players always make the same move in the same position, so stepping forward
+over one of its turns shows exactly the move it would make there again.
 """
 
 from __future__ import annotations
@@ -146,14 +149,26 @@ class GameSession:
         agent = self.computer_to_move
         if agent is None:
             return None
-        color = self.game.to_move
         if self.future:
-            return (
-                BAD,
-                f"{agent.name} plays {color}, so you can't move here. Step forward, or back "
-                "to one of your turns to play on from there.",
-            )
-        return BAD, f"It's {agent.name}'s turn ({color}). Wait for it to move."
+            return BAD, self._computer_moves_next(agent)
+        return BAD, f"It's {agent.name}'s turn ({self.game.to_move}). Wait for it to move."
+
+    def position_note(self) -> Feedback | None:
+        """Something worth saying about the position stepped to, or ``None``.
+
+        That's only when it's the computer's turn at an earlier position: it
+        doesn't move there by itself, so the note says what can be done.
+        """
+        agent = self.computer_to_move
+        if agent is None or not self.future:
+            return None
+        return INFO, self._computer_moves_next(agent)
+
+    def _computer_moves_next(self, agent: Agent) -> str:
+        return (
+            f"{agent.name} ({self.game.to_move}) moves next. Step forward to see its move, "
+            "or back to your turn to play something different."
+        )
 
     # --- Stepping ----------------------------------------------------------------
 
