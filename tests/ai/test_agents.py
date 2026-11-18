@@ -1,4 +1,4 @@
-"""The three computer players: they play legal moves, and each plays the way it promises."""
+"""The computer players: they play legal moves, and each plays the way it promises."""
 
 from __future__ import annotations
 
@@ -9,7 +9,15 @@ from collections import Counter
 
 import pytest
 
-from tak.ai import AGENTS, Agent, GreedyAgent, RandomAgent, StrategistAgent, make_agent
+from tak.ai import (
+    AGENTS,
+    Agent,
+    GreedyAgent,
+    LearnerAgent,
+    RandomAgent,
+    StrategistAgent,
+    make_agent,
+)
 from tak.ai.base import player_headers, position_key
 from tak.ai.evaluation import evaluate
 from tak.ai.tactics import find_win
@@ -62,11 +70,12 @@ def safe(game: Game, move: Move) -> bool:
 
 
 class TestRegistry:
-    def test_three_players_easiest_first(self) -> None:
-        assert list(AGENTS) == ["random", "greedy", "strategist"]
+    def test_four_players_easiest_first(self) -> None:
+        assert list(AGENTS) == ["random", "greedy", "strategist", "learner"]
         assert AGENTS["random"] is RandomAgent
         assert AGENTS["greedy"] is GreedyAgent
         assert AGENTS["strategist"] is StrategistAgent
+        assert AGENTS["learner"] is LearnerAgent
 
     def test_make_agent(self) -> None:
         agent = make_agent("greedy", seed=3)
@@ -75,7 +84,7 @@ class TestRegistry:
         assert agent.description
 
     def test_unknown_names_are_rejected(self) -> None:
-        with pytest.raises(ValueError, match="choose one of random, greedy, strategist"):
+        with pytest.raises(ValueError, match="choose one of random, greedy, strategist, learner"):
             make_agent("minimax")
 
     def test_player_headers(self) -> None:
@@ -216,9 +225,9 @@ class TestRandom:
         assert kinds == {PieceType.FLAT, PieceType.WALL, PieceType.CAP}
 
 
-@pytest.mark.parametrize("kind", [GreedyAgent, StrategistAgent])
+@pytest.mark.parametrize("kind", [GreedyAgent, StrategistAgent, LearnerAgent])
 class TestTactics:
-    """What the greedy player and the strategist both promise: win, block, and stay safe."""
+    """What the greedy player, the strategist and the learner promise: win, block, stay safe."""
 
     def test_opens_in_a_corner(self, kind: type[Agent]) -> None:
         for seed in range(10):

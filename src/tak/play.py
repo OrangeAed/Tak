@@ -13,8 +13,8 @@ Or from Python::
     play_against_bot(bot="strategist", color="random", size=6)
     play_against_bot(bot="greedy", color="black", gui=True)
 
-The three computer players, from easiest to hardest, are ``random``,
-``greedy`` and ``strategist``; see :mod:`tak.ai`.
+The four computer players, from easiest to hardest, are ``random``,
+``greedy``, ``strategist`` and ``learner``; see :mod:`tak.ai`.
 """
 
 from __future__ import annotations
@@ -67,7 +67,8 @@ def play_against_bot(
 ) -> GameResult | None:
     """Play one game against a computer player.
 
-    - ``bot``: which computer player to face: ``random``, ``greedy`` or ``strategist``.
+    - ``bot``: which computer player to face: ``random``, ``greedy``, ``strategist``
+      or ``learner``.
     - ``color``: the color *you* play: ``white`` (moves first), ``black``, or
       ``random``. The computer plays the other.
     - ``size``: the board size, 3 to 8.

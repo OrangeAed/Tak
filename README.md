@@ -1,6 +1,6 @@
 # Tak
 
-A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the abstract strategy board game. The project includes a rules-complete game engine, a terminal interface, an optional graphical interface, and three computer opponents to play against in either one.
+A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the abstract strategy board game. The project includes a rules-complete game engine, a terminal interface, an optional graphical interface, and four computer opponents to play against in either one, one of which taught itself to play.
 
 ## Features
 
@@ -10,7 +10,8 @@ A Python implementation of [Tak](https://en.wikipedia.org/wiki/Tak_(game)), the 
 - **Tak and Tinue calls**: after each move, terminal play announces "Tak!" when the move threatens to win next turn, or "Tinue!" when the opponent has no way to stop it
 - **PTN support**: read and write moves and games in Portable Tak Notation
 - **Saved games**: every finished game, in the terminal or the window, is saved as a PTN file in `saves/`
-- **Computer opponents**: three of them, from a random mover to a strategist that plays for Tinue, in the terminal or the window (`python -m tak.play`). All follow fixed, hand-written rules; none uses machine learning
+- **Computer opponents**: four of them, in the terminal or the window (`python -m tak.play`). Three follow fixed, hand-written rules, from a random mover to a strategist that plays for Tinue
+- **A self-taught opponent**: the Learner learned how to judge positions by playing thousands of games against itself, starting from nothing. It beats all three hand-written opponents, and you can retrain it from scratch in under 20 minutes (`python scripts/train_learner.py`)
 - **Tests** for the engine, the computer opponents, and both interfaces
 
 The full ruleset this project implements is in [`docs/rules.md`](docs/rules.md).
@@ -70,13 +71,13 @@ Held keys repeat, so holding Backspace deletes until you let go.
 
 ```bash
 python -m tak.play                                  # against Greedy, as White, on 5x5, in the terminal
-python -m tak.play --bot strategist --color random  # the strongest opponent; a coin toss for your color
+python -m tak.play --bot learner --color random     # the strongest opponent; a coin toss for your color
 python -m tak.play -b random -c black -s 4 --gui    # in the window
 ```
 
 | Option | Choices | Default |
 | ------ | ------- | ------- |
-| `-b`, `--bot` | `random`, `greedy`, `strategist` (easiest to hardest) | `greedy` |
+| `-b`, `--bot` | `random`, `greedy`, `strategist`, `learner` (easiest to hardest) | `greedy` |
 | `-c`, `--color` | `white`, `black`, or `random`: the color *you* play. White moves first | `white` |
 | `-s`, `--size` | 3 to 8 | 5 |
 | `--gui` | play in the 3D window instead of the terminal (needs the gui extra) | terminal |
@@ -91,13 +92,14 @@ play_against_bot(bot="strategist", color="random", size=6)  # in the terminal
 play_against_bot(bot="greedy", color="black", gui=True)  # in the window
 ```
 
-**The opponents.** All three are ordinary code following fixed rules. None learns, trains, or plays against itself. **The same position always gets the same move.** Chance comes into Random's moves, Greedy's weighted picks, and how Strategist breaks ties. Each choice is drawn from the position itself, mixed with a seed the bot picks at the start of the game. Within a game, taking moves back and playing them again (or reaching a position by another order of moves) always brings the same reply. A new game gets a new seed, so Random and Greedy play differently from game to game. With `--seed N`, every game uses that seed, so the bot always plays the same move in the same position.
+**The opponents.** Random, Greedy, and Strategist are ordinary code following fixed rules. Learner plays by an evaluation it learned by playing against itself (see [Training the learner](#training-the-learner)), but it doesn't learn during a game against you: it always plays with the weights it was trained to. **The same position always gets the same move.** Chance comes into Random's moves, Greedy's weighted picks, and how Strategist and Learner break ties. Each choice is drawn from the position itself, mixed with a seed the bot picks at the start of the game. Within a game, taking moves back and playing them again (or reaching a position by another order of moves) always brings the same reply. A new game gets a new seed, so Random and Greedy play differently from game to game. With `--seed N`, every game uses that seed, so the bot always plays the same move in the same position.
 
 - **Random** plays a legal move chosen at random.
 - **Greedy** takes a win if one is available, and otherwise blocks your win if you have one. Failing both, it picks a move at random, weighted heavily (4× per square) toward moves that gain squares topped by its flat stones or capstones. It never plays a move that lets you win next turn when another move avoids that.
 - **Strategist** also takes a win and blocks yours. Next it looks for a move that makes Tinue, a threat you can't stop, and plays it. Otherwise it plays the move that leaves the best position by a weighted score. The score counts the length of its longest road against yours, how close each of you is to completing a road, control of the center, the number of squares controlled, and the flat count (which matters more as the game nears its end). Making a threat (Tak) earns a bonus. Like Greedy, it never hands you a win it could avoid.
+- **Learner** uses the same sure-fire tactics as Strategist (take a win, block yours, play for Tinue), plus one more: it passes over moves that would let you reply with Tinue. Every other choice, which is most of them, is made by an evaluation it learned by playing against itself. That evaluation weighs 17 simple measurements of the board (flat count, road progress, stacks, reserves, and so on) with weights no one picked by hand. See [Training the learner](#training-the-learner).
 
-On the first turn Greedy and Strategist put your stone in a corner, the usual choice. In matches (see `scripts/play_match.py` below), Greedy beats Random almost every game, and Strategist beats Greedy almost every game on every board size. Strategist thinks longest. On 5x5 it typically answers in under a tenth of a second, with the odd complicated position taking a second or so. On 7x7 and 8x8 it averages about a quarter of a second, with the odd move taking a second or two.
+On the first turn Greedy, Strategist and Learner put your stone in a corner, the usual choice. In matches (see `scripts/play_match.py` below), Greedy beats Random almost every game, Strategist beats Greedy almost every game on every board size, and Learner beats all three (see [How well it plays](#how-well-it-plays)). Strategist and Learner think longest. On 5x5 they typically answer in under a tenth of a second, with the odd complicated position taking a second or so. On 7x7 and 8x8 they average a tenth to a quarter of a second, with the odd move taking a second or two. Learner takes about one and a half to two times as long as Strategist.
 
 **In the terminal**, the computer's moves are announced as it makes them (`Black (Strategist) plays c3.`), followed by "Tak!" or "Tinue!" when they threaten. `undo` takes back your last move along with the computer's reply, so it's your turn again.
 
@@ -113,6 +115,37 @@ python scripts/play_match.py greedy random --games 50 --size 6 --seed 1
 ```
 
 The script prints each result, then the score and how long each player took per move.
+
+## Training the learner
+
+Learner comes with trained weights (`src/tak/ai/learner_weights.json`), so `--bot learner` works straight away. To train it again from scratch:
+
+```bash
+python scripts/train_learner.py                   # about 10 minutes on 4 cores; never more than 20
+python scripts/train_learner.py --check 20        # then play 20 games against each bot
+python scripts/train_learner.py --games 300 -o my_weights.json   # quicker and weaker, saved elsewhere
+```
+
+By default the new weights replace the ones the game uses. Progress is printed as it goes, and at the end it prints what it learned. `--seed` makes a run repeatable: the same seed gives the same weights, however many CPU cores play the games. `--sizes` picks the board sizes to train on (5x5 by default), `--workers` the number of processes, and `--minutes` (20 by default) stops training early if it runs long, keeping what it has learned so far.
+
+**How it learns.** Learner judges a position by 17 simple measurements of the board (`FEATURE_NAMES` in `learning.py`). Most are "ours minus theirs": flats on top, walls, capstones, center control, stones held in stacks, how short of a road each player is, how far the best group reaches, and pieces left in reserve. A few aren't: whether we threaten to win next move, and whether either player is exactly two or three squares short of a road. It multiplies each measurement by a weight, adds them up, and squashes the total into a value from −1 (lost) to +1 (won). Training starts with every weight at zero, so at first every quiet move looks equally good. Then it plays 1,000 games against itself. After each game it uses TD(λ), the method behind TD-Gammon, to nudge the weights so that its opinion of each position moves toward its opinion of the next one, and at the end toward how the game actually went. A few random moves at the start of each game, and the odd random move later, keep the games varied. The step size shrinks as training goes on, and the final weights are the average over the second half of training, which is steadier than any single moment. It never plays the other bots while it learns. Games are played several at a time, one per core, in batches that share the same weights.
+
+**What is learned and what isn't.** Like Strategist, Learner always takes a win, never allows you a win it could prevent, and plays a Tinue when it finds one. It also passes over moves that let you reply with Tinue. These tactics look only a move or two ahead and are never wrong, but they say nothing about most moves, and choosing among those is what the learned weights do. With untrained weights, the same tactics win 1 of 40 games against Greedy and none of 40 against Strategist.
+
+### How well it plays
+
+The weights that come with the game were made by `python scripts/train_learner.py` with its defaults: 1,000 self-play games on 5x5, which took 11.4 minutes on a 4-core machine. Each match below swaps colors every game:
+
+| Board | vs Random | vs Greedy | vs Strategist |
+| ----- | --------- | --------- | ------------- |
+| 3x3 | 40–0 | 33–2, 5 draws | 30–10 |
+| 4x4 | 40–0 | 40–0 | 40–0 |
+| 5x5 | 100–0 | 100–0 | 99–1 |
+| 6x6 | 40–0 | 40–0 | 39–1 |
+| 7x7 | 20–0 | 20–0 | 20–0 |
+| 8x8 | 12–0 | 12–0 | 23–9 |
+
+It only trained on 5x5, but the measurements are scaled by board size, so the weights carry over. The 3x3 board favors whoever moves first, and 8x8 is where Strategist does best against it. Training isn't a lucky draw, either: three more runs with other seeds beat Strategist 58–2, 55–5 and 60–0 on 5x5. To run your own matches, use `python scripts/play_match.py learner strategist --games 100`, for example.
 
 ## Saved games
 
@@ -206,13 +239,17 @@ Tak/
 │       │   ├── computer.py   # the computer's move, worked out in a background thread
 │       │   └── app.py        # window, event handling (Controller), command-line options
 │       ├── play.py           # play against the computer: `python -m tak.play`, play_against_bot()
-│       └── ai/               # computer players (fixed rules, no machine learning)
+│       └── ai/               # computer players
 │           ├── base.py       # Agent interface: choose_move(game) -> Move
 │           ├── random_agent.py      # Random: any legal move
 │           ├── greedy_agent.py      # Greedy: win, block, otherwise gain squares
 │           ├── strategist_agent.py  # Strategist: win, block, Tinue, otherwise best position
+│           ├── learner_agent.py     # Learner: the same tactics, otherwise its learned evaluation
 │           ├── tactics.py    # fast one-move look-ahead: immediate wins, safe moves, Tinue
-│           ├── evaluation.py # scoring a position: roads, center, squares, flats
+│           ├── evaluation.py # scoring a position: roads, center, squares, flats (hand-tuned)
+│           ├── learning.py   # the Learner's features and learned evaluation
+│           ├── learner_weights.json # the Learner's trained weights
+│           ├── training.py   # teaching the Learner: TD(lambda) learning from self-play
 │           └── minimax.py    # deeper search (planned; placeholder)
 ├── tests/                    # mirrors src/tak, plus threats/ for Tak and Tinue
 │   ├── conftest.py           # shared fixtures (e.g. board builders); keeps saves out of saves/
@@ -220,7 +257,8 @@ Tak/
 │   ├── test_play.py          # playing against the computer: options, whole games, the window
 │   ├── engine/
 │   ├── cli/
-│   ├── ai/                   # computer players, with the fast look-ahead checked against the engine
+│   ├── ai/                   # computer players, with the fast look-ahead checked against the engine;
+│   │                         #   test_learner.py covers the Learner's features, search and training
 │   ├── gui/                  # clicking, stepping, picking, drawing, controls (headless pygame)
 │   └── threats/              # Tak and Tinue, from the engine through to the terminal
 │       ├── conftest.py                   # position builder, scripted terminal sessions
@@ -230,7 +268,8 @@ Tak/
 │       ├── test_threat_announcements.py  # "Tak!" and "Tinue!" in the terminal
 │       └── test_road_search.py           # road search, which the checks run constantly
 ├── scripts/
-│   └── play_match.py         # pit two computer players against each other
+│   ├── play_match.py         # pit two computer players against each other
+│   └── train_learner.py      # train the Learner by self-play, from scratch
 └── saves/                    # local saved games and match output (contents ignored by git)
 ```
 
@@ -256,7 +295,7 @@ Tak/
 
 **`tak.gui`: graphical play (optional).** Draws the board in 3D in a pygame window, with rank and file labels, every stack built up piece by piece, and both players' reserves; the view can be turned, tilted, and zoomed. pygame only draws 2D shapes, so `scene.py` does the 3D itself (perspective projection, shading, and back-to-front painting), with no other dependencies. Moves are made by clicking (checked step by step against the engine's legal moves) or typed in PTN, and any game, including a saved one, can be stepped through. Its dependency is an optional extra (`pip install -e ".[gui]"`), so the rest of the project does not require it. Start it with `python -m tak.gui`, or `python -m tak.play --gui` to play the computer; the computer thinks in a background thread (`computer.py`) so the window stays responsive.
 
-**`tak.ai`: computer players.** Every computer player implements the `Agent` interface in `base.py`: given a game, return a move, without changing the game (agents think on a copy, `Game.copy()`). The three players are described under [Playing against the computer](#playing-against-the-computer). They are built from two modules of plain, hand-tuned code. `tactics.py` answers "can this player win right now?", "does this move hand the opponent a win?" and "is this Tinue?". It gives the same answers as the engine's own checks but several times faster, which matters because the stronger players ask after every move they consider. Road wins by placement are read off the connected groups of road pieces. A slide is only tried one by one when the line it moves along could possibly complete a road. Near the end, where flat wins are possible, it defers to the engine. `evaluation.py` scores positions for the Strategist. Deeper search (`minimax.py`) is still a placeholder.
+**`tak.ai`: computer players.** Every computer player implements the `Agent` interface in `base.py`: given a game, return a move, without changing the game (agents think on a copy, `Game.copy()`). The four players are described under [Playing against the computer](#playing-against-the-computer). The first three are built from two modules of plain, hand-tuned code. `tactics.py` answers "can this player win right now?", "does this move hand the opponent a win?" and "is this Tinue?". It gives the same answers as the engine's own checks but several times faster, which matters because the stronger players ask after every move they consider. Road wins by placement are read off the connected groups of road pieces. A slide is only tried one by one when the line it moves along could possibly complete a road. Near the end, where flat wins are possible, it defers to the engine. `evaluation.py` scores positions for the Strategist. The Learner uses `tactics.py` too, with its own faster search for wins near the end of the game (checked against the engine in the tests), and scores positions with `learning.py`, whose weights come from `training.py` (see [Training the learner](#training-the-learner)). Deeper search (`minimax.py`) is still a placeholder.
 
 **`tak.play`: playing the computer.** The `python -m tak.play` command and the `play_against_bot()` function: choose the opponent, your color, the board size, and the terminal or the window.
 

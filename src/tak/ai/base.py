@@ -18,8 +18,8 @@ class Agent(ABC):
 
     Call :meth:`choose_move` with the game; it returns a legal move for the
     player whose turn it is and never changes the game it is given (it thinks
-    on a copy). Every agent is ordinary code following fixed rules, with no
-    learning of any kind.
+    on a copy). Agents don't learn while they play: even the learner, whose
+    evaluation was trained beforehand, plays with fixed weights.
 
     **The same position always gets the same move.** Agents do make random
     choices (the random player's moves, the greedy player's weighted picks,
