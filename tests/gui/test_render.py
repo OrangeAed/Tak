@@ -8,6 +8,7 @@ from collections.abc import Callable
 import pygame
 import pytest
 
+from tak.ai.explain import Explanation
 from tak.engine import BOARD_CONFIG, Color, Game, Piece, PieceType, Square
 from tak.gui import render
 from tak.gui.scene import FLAT_HEIGHT, Camera
@@ -219,3 +220,126 @@ class TestPanel:
         assert all(font.size(line)[0] <= 238 for line in lines)
         assert "".join(lines).replace(" ", "") == text.replace(" ", "")
         assert all(line[-1] in "/_-" for line in lines[1:-1])  # broke at separators
+
+
+EXPLANATION = Explanation(
+    "Why Learner played 3b2-",
+    "Of the 105 moves that don't hand you a win, this is the one its learned evaluation "
+    "liked best.",
+    (
+        "It takes the lead on flats, 4 to 2.",
+        "It blocks your road (you are now about 4 squares from one, up from 3) and builds "
+        "toward its own road (about 2 squares to go, down from 4).",
+        "It takes ground near the center, where a road can head in any direction.",
+    ),
+    "How it rates its position now: ahead (+0.25, on a scale of -1 to +1).",
+)
+
+
+class TestExplanation:
+    def draw(
+        self,
+        window: tuple[int, int] = render.DEFAULT_WINDOW,
+        explained: tuple[Square, ...] = (),
+        controls: render.Controls | None = None,
+    ) -> render.Frame:
+        game = Game(5)
+        layout = render.layout_for(game.size, window)
+        surface = pygame.Surface(layout.window_size)
+        return render.draw_game(
+            surface,
+            game,
+            layout,
+            render.Fonts.default(),
+            input_text="",
+            controls=controls,
+            explanation=EXPLANATION,
+            explained=explained,
+        )
+
+    def panel(
+        self,
+        window: tuple[int, int] = render.DEFAULT_WINDOW,
+        message: str | None = None,
+        message_color: tuple[int, int, int] = render.TEXT,
+        game: Game | None = None,
+        **controls: object,
+    ) -> tuple[pygame.Surface, dict[str, pygame.Rect]]:
+        layout = render.layout_for(5, window)
+        surface = pygame.Surface(layout.window_size)
+        buttons = render.draw_panel(
+            surface,
+            game or Game(5),
+            layout,
+            render.Fonts.default(),
+            message,
+            message_color,
+            input_text="",
+            controls=render.Controls(**controls),  # type: ignore[arg-type]
+        )
+        return surface, buttons
+
+    @pytest.mark.parametrize("window", [render.MIN_WINDOW, render.DEFAULT_WINDOW, (1920, 1080)])
+    def test_why_sits_just_above_the_step_buttons(self, window: tuple[int, int]) -> None:
+        _, buttons = self.panel(window, explains=True, explainable=True)
+        why = buttons[render.EXPLAIN_BUTTON]
+        assert render.layout_for(5, window).panel_rect.contains(why)
+        for name, rect in buttons.items():
+            if name != render.EXPLAIN_BUTTON:
+                assert not why.colliderect(rect), name
+        for name in render.NAV_BUTTONS:
+            assert 0 < buttons[name].top - why.bottom <= 12  # right below it
+
+    def test_why_stays_put_whatever_the_text_says(self) -> None:
+        places = {
+            self.panel(message=message, last_move=last, versus=versus, **state)[1][
+                render.EXPLAIN_BUTTON
+            ].topleft
+            for message in (None, "Learner played 3c4>12. Tak!")
+            for last in (None, "3c4>12")
+            for versus in (None, "You play White against Learner")
+            for state in (
+                {"explains": True},
+                {"explains": True, "explainable": True},
+                {"explains": True, "explainable": True, "explaining": True},
+            )
+        }
+        assert len(places) == 1
+
+    def test_no_why_against_a_computer_that_cant_explain(self) -> None:
+        _, buttons = self.panel(last_move="c3")
+        assert render.EXPLAIN_BUTTON not in buttons
+
+    def test_short_of_room_the_message_beats_who_plays_whom(
+        self, started: Callable[..., Game]
+    ) -> None:
+        marker = (255, 0, 255)  # a color nothing else uses
+        surface, _ = self.panel(
+            render.MIN_WINDOW,
+            game=started("a1 e5 b1 c3"),
+            message="Learner played c3. Tak!",
+            message_color=marker,
+            last_move="c3",
+            versus="You play White against Learner",
+            explains=True,
+        )
+        panel = surface.subsurface(render.layout_for(5, render.MIN_WINDOW).panel_rect)
+        drawn = pygame.mask.from_threshold(panel, marker, (1, 1, 1, 255)).count()
+        assert drawn > 50  # the message is there
+
+    @pytest.mark.parametrize("window", [render.MIN_WINDOW, render.DEFAULT_WINDOW, (1920, 1080)])
+    def test_the_card_sits_over_the_board(self, window: tuple[int, int]) -> None:
+        drawn = self.draw(window)
+        card = drawn.buttons[render.EXPLANATION_CARD]
+        assert drawn.viewport.contains(card)
+        assert drawn.button_at(card.center) == render.EXPLANATION_CARD  # a click closes it
+
+    def test_the_card_keeps_clear_of_the_move_it_explains(self) -> None:
+        bottom = self.draw().buttons[render.EXPLANATION_CARD]
+        # Squares near the front (bottom) of the board are under the card there...
+        front = tuple(Square(file, 0) for file in range(3))
+        moved = self.draw(explained=front).buttons[render.EXPLANATION_CARD]
+        assert moved.top < bottom.top  # ...so it moves up out of the way
+        # Squares at the back stay clear of it where it usually goes.
+        back = tuple(Square(file, 4) for file in range(3))
+        assert self.draw(explained=back).buttons[render.EXPLANATION_CARD] == bottom

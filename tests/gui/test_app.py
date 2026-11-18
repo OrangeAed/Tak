@@ -13,8 +13,17 @@ from pathlib import Path
 import pygame
 import pytest
 
-from tak.ai import make_agent
-from tak.engine import Color, Game, Piece, PieceType, Square, game_to_ptn, parse_move
+from tak.ai import Agent, LearnerAgent, make_agent
+from tak.engine import (
+    Color,
+    Game,
+    Piece,
+    PieceType,
+    Square,
+    format_move,
+    game_to_ptn,
+    parse_move,
+)
 from tak.gui import render
 from tak.gui.app import DRAG_THRESHOLD, Controller, main
 from tak.gui.computer import ComputerTurn
@@ -525,3 +534,110 @@ class TestAgainstTheComputer:
         kind, text = window.controller.message
         assert kind == BAD and text.startswith("Scripty couldn't choose a move: a1 is already")
         assert window.game.ply == 1
+
+
+class TestWhyThisMove:
+    """After the learner moves, "Why?" explains the move, over the board."""
+
+    NOTHING_PRESSED: dict[int, int] = defaultdict(int)
+
+    def window(self, black: Agent | None = None) -> Window:
+        agent = black if black is not None else LearnerAgent(seed=2)
+        window = Window(GameSession(Game(4), players={Color.BLACK: agent}))
+        window.controller.computer = ComputerTurn(min_thinking=0, threaded=False)
+        return window
+
+    def tick(self, window: Window) -> None:
+        window.controller.update(1 / 60, self.NOTHING_PRESSED)
+        if window.controller.dirty:
+            window.draw()
+
+    def play(self, window: Window, move: str) -> None:
+        """Type your move, and let the learner answer."""
+        window.type(move)
+        self.tick(window)
+
+    def last_move(self, window: Window) -> str:
+        played = window.game.history[-1]
+        return format_move(played.move, flattened=played.flattened)
+
+    def test_why_is_there_all_game_and_works_after_the_learners_move(self) -> None:
+        window = self.window()
+        controller = window.controller
+        where = controller.frame.buttons["explain"]
+        assert not controller.explainable()  # nothing to explain yet
+        window.click_button("explain")
+        assert controller.explanation is None
+        window.type("a1")
+        assert not controller.explainable()  # your move
+        self.tick(window)
+        assert window.game.ply == 2
+        assert controller.explainable()
+        assert controller.frame.buttons["explain"] == where  # it never moves
+        window.click_button("explain")
+        assert controller.explanation is not None
+
+    def test_clicking_why_explains_the_move_and_clicking_again_hides_it(self) -> None:
+        window = self.window()
+        self.play(window, "a1")
+        window.click_button("explain")
+        explanation = window.controller.explanation
+        assert explanation is not None
+        assert explanation.title == f"Why Learner played {self.last_move(window)}"
+        assert "It put your stone in a corner" in explanation.summary
+        assert "explain:close" in window.controller.frame.buttons
+        window.click_button("explain")
+        assert window.controller.explanation is None
+        assert "explain:close" not in window.controller.frame.buttons
+
+    def test_a_quiet_move_is_explained_with_what_it_gained(self) -> None:
+        window = self.window()
+        for move in ("a1", "b2"):
+            self.play(window, move)
+        window.click_button("explain")
+        explanation = window.controller.explanation
+        assert explanation is not None
+        assert "learned evaluation" in explanation.summary
+        assert explanation.points and explanation.outlook
+
+    def test_clicking_the_card_or_esc_closes_it(self) -> None:
+        window = self.window()
+        self.play(window, "a1")
+        window.click_button("explain")
+        window.click_button("explain:close")
+        assert window.controller.explanation is None
+        window.click_button("explain")
+        window.key(pygame.K_ESCAPE)
+        assert window.controller.explanation is None
+
+    def test_it_closes_when_the_game_moves_on(self) -> None:
+        window = self.window()
+        self.play(window, "a1")
+        window.click_button("explain")
+        self.play(window, "b2")  # your move, and the learner's answer
+        assert window.controller.explanation is None
+        assert "explain" in window.controller.frame.buttons  # for the new move
+        window.click_button("explain")
+        window.click_button("nav:back")
+        assert window.controller.explanation is None
+
+    def test_stepping_back_to_an_earlier_move_of_its_own(self) -> None:
+        window = self.window()
+        for move in ("a1", "b2"):
+            self.play(window, move)
+        window.click_button("nav:back")  # to your b2: nothing to explain
+        assert not window.controller.explainable()
+        window.click_button("nav:back")  # to the learner's first move
+        assert window.controller.explainable()
+        window.click_button("explain")
+        explanation = window.controller.explanation
+        assert explanation is not None
+        assert explanation.title == f"Why Learner played {self.last_move(window)}"
+
+    def test_only_for_the_learner(self) -> None:
+        window = self.window(black=Scripted("d4", "c3"))
+        self.play(window, "a1")
+        assert window.game.ply == 2
+        assert "explain" not in window.controller.frame.buttons
+        window.controller.toggle_explanation()  # even if asked directly
+        assert window.controller.explanation is None

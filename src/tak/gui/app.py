@@ -14,6 +14,8 @@ from any point if you like.
 - The window can be resized.
 - Against the computer (``python -m tak.play --gui``), it moves by itself
   when its turn comes, thinking in the background (:mod:`tak.gui.computer`).
+  Against the learner, "Why this move?" in the panel explains its last move
+  (:mod:`tak.ai.explain`).
 
 All rules come from the engine; this module only draws and collects input.
 The event handling lives in :class:`Controller`, which takes one pygame event
@@ -29,6 +31,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from tak.ai.explain import Explanation, can_explain, explain_move
 from tak.engine.board import BOARD_CONFIG, Square
 from tak.engine.game import Game
 from tak.engine.notation import format_move
@@ -77,6 +80,10 @@ class Controller:
         self.camera = self.default_camera
         self.computer = computer or ComputerTurn()
         self.computer_failed: Position | None = None  # don't retry a position that failed
+        # The explanation of the computer's last move, while it's open, and the
+        # position it belongs to (it closes once the game moves on).
+        self.explanation: Explanation | None = None
+        self.explained: Position | None = None
 
         self.typed = ""
         self.message: Feedback | None = message
@@ -211,7 +218,11 @@ class Controller:
             self.message = None
 
     def press_button(self, name: str) -> None:
-        if name.startswith("place:"):
+        if name == self.render.EXPLAIN_BUTTON:
+            self.toggle_explanation()
+        elif name == self.render.EXPLANATION_CARD:
+            self.explanation = None
+        elif name.startswith("place:"):
             self.place = PieceType(name.removeprefix("place:"))
         elif name == "nav:start":
             self.step(self.session.to_start)
@@ -247,8 +258,33 @@ class Controller:
         action()
         self.message = self.session.position_note()
 
+    def explainable(self) -> bool:
+        """Whether the last move here was the computer's, and it can say why it played it."""
+        return can_explain(self.session.computer_that_moved)
+
+    def toggle_explanation(self) -> None:
+        """Open the explanation of the computer's last move, or close it if it's open."""
+        if self.explanation is not None:
+            self.explanation = None
+            return
+        agent = self.session.computer_that_moved
+        if not can_explain(agent):
+            return
+        before = self.game.copy()
+        before.undo()
+        person = before.to_move.opponent not in self.session.players
+        try:
+            self.explanation = explain_move(agent, before, person=person)
+        except Exception as exc:  # a failed explanation shouldn't take the window down
+            self.message = BAD, f"{agent.name} couldn't explain its move: {exc}"
+            return
+        self.explained = position_of(self.game)
+
     def cancel(self) -> None:
-        """Esc or right-click: drop whatever is in progress."""
+        """Esc or right-click: drop whatever is in progress, or close the explanation."""
+        if self.explanation is not None:
+            self.explanation = None
+            return
         lifted = self.builder.cancel()
         pending = self.session.cancel_pending()
         if lifted or pending or self.typed:
@@ -316,14 +352,18 @@ class Controller:
         if surface.get_size() != self.layout.window_size:
             self.resize(surface.get_size())
         game = self.game
+        if self.explanation is not None and position_of(game) != self.explained:
+            self.explanation = None  # the game has moved on
         board, floating = self.builder.preview(game.board)
 
         highlights: dict[Square, tuple[int, int, int, int]] = {}
         last_move = None
+        last_squares: list[Square] = []
         if game.history:
             played = game.history[-1]
             last_move = format_move(played.move, flattened=played.flattened)
-            for square in touched_squares(played.move):
+            last_squares = touched_squares(played.move)
+            for square in last_squares:
                 highlights[square] = render.LAST_MOVE
         if self.builder.lift is not None:
             for square in self.builder.targets(game):
@@ -352,7 +392,12 @@ class Controller:
                 versus=self.session.versus_text(),
                 thinking=self._thinking_text(),
                 your_turn=self.session.computer_to_move is None,
+                explains=any(can_explain(agent) for agent in self.session.players.values()),
+                explainable=self.explainable(),
+                explaining=self.explanation is not None,
             ),
+            explanation=self.explanation,
+            explained=last_squares,
         )
         self.dirty = False
 

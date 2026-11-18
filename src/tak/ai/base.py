@@ -50,9 +50,12 @@ class Agent(ABC):
         """
         if game.is_over:
             raise ValueError("the game is over")
+        return self.pick(game.copy(), self.rng_for(game))
+
+    def rng_for(self, game: Game) -> random.Random:
+        """The random numbers :meth:`pick` gets for ``game``'s position."""
         # A string seed is hashed the same way in every run (unlike hash()).
-        rng = random.Random(f"{self.seed}|{position_key(game)}")
-        return self.pick(game.copy(), rng)
+        return random.Random(f"{self.seed}|{position_key(game)}")
 
     @abstractmethod
     def pick(self, game: Game, rng: random.Random) -> Move:

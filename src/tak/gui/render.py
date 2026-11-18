@@ -20,11 +20,12 @@ the app can tell which square or button is under the mouse.
 from __future__ import annotations
 
 import functools
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 import pygame
 
+from tak.ai.explain import Explanation
 from tak.engine.board import BOARD_CONFIG, Board, Square
 from tak.engine.game import Game
 from tak.engine.pieces import Color, Piece, PieceType
@@ -151,6 +152,9 @@ class Controls:
     versus: str | None = None  # who plays whom, against the computer
     thinking: str | None = None  # shown while the computer works out its move
     your_turn: bool = True  # False on the computer's turn: no piece chooser then
+    explains: bool = False  # a computer player can explain its moves: show "Why this move?"
+    explainable: bool = False  # the last move is one it can explain (else the button is off)
+    explaining: bool = False  # the explanation is open
 
 
 @dataclass
@@ -423,6 +427,10 @@ HINTS = (
 
 #: The step buttons, left to right.
 NAV_BUTTONS = ("nav:start", "nav:back", "nav:forward", "nav:end")
+#: The button that asks why the computer played its last move, and the
+#: explanation card itself (clicking it closes it).
+EXPLAIN_BUTTON = "explain"
+EXPLANATION_CARD = "explain:close"
 
 
 def _button(surface: pygame.Surface, rect: pygame.Rect, selected: bool, enabled: bool) -> None:
@@ -495,6 +503,20 @@ def draw_panel(
     surface.blit(count, (nav.left + 4 * 40 + 6, nav.centery - count.get_height() // 2))
     bottom = nav.top - 10
 
+    # Ask the computer why it played its last move. Against a computer that can
+    # explain itself, the button is there all game, so it never moves; it's
+    # greyed out while there's nothing to explain (after your own move).
+    if controls.explains:
+        rect = pygame.Rect(x, bottom - 30, width, 30)
+        enabled = controls.explainable or controls.explaining
+        _button(surface, rect, controls.explaining, enabled)
+        wording = "Hide the explanation" if controls.explaining else "Why this move?"
+        tint = ACCENT if controls.explaining else TEXT if enabled else TEXT_DIM
+        caption = fonts.text.render(wording, True, tint)
+        surface.blit(caption, caption.get_rect(center=rect.center))
+        buttons[EXPLAIN_BUTTON] = rect
+        bottom = rect.top - 10
+
     # What a click on an empty square places.
     if not game.is_over and controls.your_turn:
         owner = game.to_move.opponent if game.in_opening else game.to_move
@@ -531,12 +553,16 @@ def draw_panel(
     if controls.last_move:
         status.append(f"Last move: {controls.last_move}")
     lines = [(part, TEXT) for line in status for part in _wrap(line, fonts.text, width)]
-    if controls.versus:
-        lines[:0] = [(part, TEXT_DIM) for part in _wrap(controls.versus, fonts.text, width)]
     if controls.thinking:
         lines += [(part, ACCENT) for part in _wrap(controls.thinking, fonts.text, width)]
     if message:
         lines += [(part, message_color) for part in _wrap(message, fonts.text, width)]
+    if controls.versus:
+        versus = [(part, TEXT_DIM) for part in _wrap(controls.versus, fonts.text, width)]
+        # Who plays whom is also in the window's title, so it goes first if room is short.
+        needed = sum(fonts.text.size(text)[1] + 3 for text, _ in versus + lines) - 3
+        if y + needed <= bottom:
+            lines[:0] = versus
     for text, tint in lines:
         rendered = fonts.text.render(text, True, tint)
         if y + rendered.get_height() > bottom:
@@ -581,6 +607,91 @@ def _split_long(word: str, font: pygame.font.Font, width: int) -> list[str]:
     return [*pieces, word]
 
 
+# --- Explanation card ---------------------------------------------------------------
+
+#: The widest the explanation card gets, and the padding inside it.
+CARD_WIDTH = 560
+CARD_PADDING = 14
+CARD_BG: RGBA = (28, 24, 21, 235)
+BULLET = "\u2022"
+
+
+def draw_explanation(
+    surface: pygame.Surface,
+    layout: Layout,
+    fonts: Fonts,
+    explanation: Explanation,
+    avoid: Sequence[tuple[int, int]] = (),
+) -> pygame.Rect:
+    """A card over the board explaining a move; returns where it is.
+
+    It goes at the bottom left of the board's view, or the top left if that
+    covers fewer of the ``avoid`` points (such as the squares the move touched).
+    """
+    viewport = layout.viewport
+    width = min(CARD_WIDTH, viewport.width - 2 * MARGIN)
+    inner = width - 2 * CARD_PADDING
+    indent = fonts.text.size(BULLET + " ")[0]
+
+    # (text, font, color, x offset), with None for a little space.
+    rows: list[tuple[str, pygame.font.Font, RGB, int] | None] = []
+    rows += [(line, fonts.text, ACCENT, 0) for line in _wrap(explanation.title, fonts.text, inner)]
+    rows.append(None)
+    rows += [(line, fonts.text, TEXT, 0) for line in _wrap(explanation.summary, fonts.text, inner)]
+    for point in explanation.points:
+        rows.append(None)
+        for i, line in enumerate(_wrap(point, fonts.text, inner - indent)):
+            if i == 0:
+                rows.append((BULLET, fonts.text, ACCENT, 0))
+                rows.append((line, fonts.text, TEXT, -1))  # -1: on the bullet's line
+            else:
+                rows.append((line, fonts.text, TEXT, indent))
+    if explanation.outlook:
+        rows.append(None)
+        rows += [
+            (line, fonts.text, TEXT_DIM, 0)
+            for line in _wrap(explanation.outlook, fonts.text, inner)
+        ]
+    rows.append(None)
+    rows.append(("Click here or press Esc to close.", fonts.small, TEXT_DIM, 0))
+
+    line_height = fonts.text.get_linesize()
+    gap = line_height // 3
+    height = 2 * CARD_PADDING + sum(
+        gap if row is None else 0 if row[3] == -1 else row[1].get_linesize() for row in rows
+    )
+    height = min(height, viewport.height - 2 * MARGIN)
+    card = pygame.Rect(0, 0, width, height)
+    card.bottomleft = (viewport.left + MARGIN, viewport.bottom - MARGIN)
+    top = card.copy()
+    top.topleft = (viewport.left + MARGIN, viewport.top + MARGIN)
+    if sum(map(top.collidepoint, avoid)) < sum(map(card.collidepoint, avoid)):
+        card = top
+
+    layer = pygame.Surface(card.size, pygame.SRCALPHA)
+    pygame.draw.rect(layer, CARD_BG, layer.get_rect(), border_radius=8)
+    surface.blit(layer, card)
+    pygame.draw.rect(surface, PANEL_RULE, card, width=2, border_radius=8)
+
+    y = card.top + CARD_PADDING
+    previous_y = y
+    for row in rows:
+        if row is None:
+            y += gap
+            continue
+        text, font, color, offset = row
+        if offset == -1:  # the text after a bullet, on the same line
+            line_y, offset = previous_y, indent
+        else:
+            line_y = y
+            y += font.get_linesize()
+        if line_y + font.get_linesize() > card.bottom - CARD_PADDING:
+            break  # out of room (a very small window)
+        surface.blit(font.render(text, True, color), (card.left + CARD_PADDING + offset, line_y))
+        previous_y = line_y
+    return card
+
+
 # --- Everything --------------------------------------------------------------------
 
 
@@ -595,11 +706,22 @@ def draw_game(
     input_text: str | None = None,
     extras: SceneExtras | None = None,
     controls: Controls | None = None,
+    explanation: Explanation | None = None,
+    explained: Sequence[Square] = (),
 ) -> Frame:
-    """One full frame: the 3D board and the side panel."""
+    """One full frame: the 3D board and the side panel, and any explanation over the board.
+
+    ``explained`` are the squares the explained move touched, which the
+    explanation tries not to cover.
+    """
     surface.fill(BACKGROUND)
     frame = draw_scene(surface, game, layout, camera or Camera(), extras)
     frame.buttons = draw_panel(
         surface, game, layout, fonts, message, message_color, input_text, controls
     )
+    if explanation is not None:
+        # Listed first, so a click on the card closes it rather than landing on the board.
+        avoid = [frame.to_window((s.file + 0.5, s.rank + 0.5, 0.0)) for s in explained]
+        card = draw_explanation(surface, layout, fonts, explanation, avoid)
+        frame.buttons = {EXPLANATION_CARD: card, **frame.buttons}
     return frame

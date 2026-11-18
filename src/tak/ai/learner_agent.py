@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import random
+import threading
+from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Literal
 
 from tak.ai import tactics
-from tak.ai.base import Agent, opening_move
+from tak.ai.base import Agent, opening_move, position_key
 from tak.ai.learning import Weights, default_weights, features, value
 from tak.ai.tactics import (
     Stacks,
@@ -33,6 +36,26 @@ class Option:
     value: float  # how good the position after it is for us, -1 to +1 (learned)
     win_next: Move | None  # a win we would threaten after it (Tak), if any
     features: list[float] | None  # the position's features (None if the game ended)
+
+
+#: Why the learner played a move: the step of its turn that decided it (see
+#: :class:`LearnerAgent`). ``lost`` means every move let the opponent win.
+Reason = Literal["opening", "win", "tinue", "best", "lost"]
+
+
+@dataclass(frozen=True)
+class Decision:
+    """How the learner chose its move in one position, for explaining it afterwards."""
+
+    move: Move
+    reason: Reason
+    #: The option played, with what it leads to (``None`` in the opening and for a win).
+    chosen: Option | None = None
+    #: How many moves it had that didn't let the opponent win straight away.
+    safe: int = 0
+    #: Moves it liked better but passed over, each with the opponent's reply
+    #: that would have made Tinue, best-looking first.
+    passed_over: tuple[tuple[Option, Move], ...] = ()
 
 
 class LearnerAgent(Agent):
@@ -80,14 +103,52 @@ class LearnerAgent(Agent):
         self.weights = weights if weights is not None else default_weights()
         if tinue_checks is not None:
             self.tinue_checks = tinue_checks
+        # Recent decisions by position, so a move can be explained without
+        # working it out again. The window thinks in another thread, hence the lock.
+        self._decisions: OrderedDict[str, Decision] = OrderedDict()
+        self._lock = threading.Lock()
+
+    #: How many recent decisions to remember.
+    remembered = 256
+
+    def choose_move(self, game: Game) -> Move:
+        return self.decide(game).move
+
+    def decide(self, game: Game) -> Decision:
+        """The move :meth:`choose_move` plays in ``game``, with how it was chosen.
+
+        Always the same move as :meth:`choose_move` (it's the same work, and
+        recent positions are remembered, so asking after the move was played
+        is quick). The game is left unchanged.
+        """
+        if game.is_over:
+            raise ValueError("the game is over")
+        key = position_key(game)
+        with self._lock:
+            known = self._decisions.get(key)
+            if known is not None:
+                self._decisions.move_to_end(key)
+                return known
+        decision = self._decide(game.copy(), self.rng_for(game))
+        with self._lock:
+            self._decisions[key] = decision
+            while len(self._decisions) > self.remembered:
+                self._decisions.popitem(last=False)
+        return decision
 
     def pick(self, game: Game, rng: random.Random) -> Move:
+        return self._decide(game, rng).move
+
+    def _decide(self, game: Game, rng: random.Random) -> Decision:
         if game.in_opening:
-            return opening_move(game, rng)
+            return Decision(opening_move(game, rng), "opening")
         win = find_win(game, game.to_move)
         if win is not None:
-            return win
-        return self.best(game, self.consider(game, rng)).move
+            return Decision(win, "win")
+        options = self.consider(game, rng)
+        chosen, reason, passed_over = self._choose(game, options)
+        safe = sum(1 for option in options if option.safe)
+        return Decision(chosen.move, reason, chosen, safe, passed_over)
 
     def consider(self, game: Game, rng: random.Random) -> list[Option]:
         """Every legal move, in a random order, with what it leads to.
@@ -106,9 +167,15 @@ class LearnerAgent(Agent):
         the learned evaluation likes best, passing over any after which the
         opponent could make Tinue themselves.
         """
+        return self._choose(game, options)[0]
+
+    def _choose(
+        self, game: Game, options: list[Option]
+    ) -> tuple[Option, Reason, tuple[tuple[Option, Move], ...]]:
+        """:meth:`best`, also saying why, and which better-looking moves it passed over."""
         safe = [option for option in options if option.safe]
         if not safe:
-            return max(options, key=lambda option: option.value)  # lost whatever we do
+            return max(options, key=lambda option: option.value), "lost", ()  # lost anyway
         me = game.to_move
         taks = sorted(
             (option for option in safe if option.win_next is not None),
@@ -120,15 +187,18 @@ class LearnerAgent(Agent):
             game.play(option.move)
             try:
                 if is_tinue(game, me, hints=[option.win_next]):
-                    return option
+                    return option, "tinue", ()
             finally:
                 game.undo()
         # Best first; the sort keeps the random order among equals, so ties stay random.
         ranked = sorted(safe, key=lambda option: option.value, reverse=True)
+        passed_over: list[tuple[Option, Move]] = []
         for option in ranked[: self.tinue_checks]:
-            if not allows_tinue(game, option.move):
-                return option
-        return ranked[0]
+            reply = tinue_reply(game, option.move)
+            if reply is None:
+                return option, "best", tuple(passed_over)
+            passed_over.append((option, reply))
+        return ranked[0], "best", ()  # every move checked allows Tinue: play the best-looking
 
     def _consider(self, game: Game, move: Move, threats: list[Move]) -> Option:
         """Play ``move`` on ``game``, look at the result, and take it back."""
@@ -161,12 +231,20 @@ def allows_tinue(game: Game, move: Move) -> bool:
     That is, some reply leaves the opponent threatening a win that can't be
     stopped. ``move`` should be safe (it doesn't let the opponent win at once).
     """
+    return tinue_reply(game, move) is not None
+
+
+def tinue_reply(game: Game, move: Move) -> Move | None:
+    """The opponent's reply to ``move`` that would make Tinue, or ``None`` if there is none.
+
+    See :func:`allows_tinue`. The game is left unchanged.
+    """
     me = game.to_move
     them = me.opponent
     game.play(move)
     try:
         if game.is_over:
-            return False
+            return None
         threats: list[Move] = []  # their wins seen so far, tried first next time
         for reply in game.legal_moves():
             game.play(reply)
@@ -179,10 +257,10 @@ def allows_tinue(game: Game, move: Move) -> bool:
                 if threat not in threats:
                     threats.append(threat)
                 if is_tinue(game, them, hints=[threat]):
-                    return True
+                    return reply
             finally:
                 game.undo()
-        return False
+        return None
     finally:
         game.undo()
 

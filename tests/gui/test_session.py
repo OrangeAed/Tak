@@ -218,6 +218,17 @@ class TestAgainstTheComputer:
         assert session.computer_to_move is session.players[Color.BLACK]
         assert session.waiting_for_computer
 
+    def test_which_computer_made_the_last_move(self) -> None:
+        session = self.session(black=Scripted())
+        assert session.computer_that_moved is None  # no moves yet
+        session.play_text("a1")
+        assert session.computer_that_moved is None  # yours
+        session.play_computer(parse_move("c3"))
+        assert session.computer_that_moved is session.players[Color.BLACK]
+        session.back()
+        assert session.computer_that_moved is None
+        assert GameSession(Game(3)).computer_that_moved is None
+
     def test_who_plays_whom(self) -> None:
         assert self.session(black=Scripted()).versus_text() == "You play White against Scripty"
         assert self.session(white=Scripted()).versus_text() == "You play Black against Scripty"

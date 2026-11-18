@@ -130,6 +130,13 @@ class GameSession:
         return self.players.get(self.game.to_move)
 
     @property
+    def computer_that_moved(self) -> Agent | None:
+        """The computer player that made the last move played here, or ``None``."""
+        if not self.game.history:
+            return None
+        return self.players.get(self.game.to_move.opponent)
+
+    @property
     def waiting_for_computer(self) -> bool:
         """Whether the computer should move now: it's its turn at the latest position."""
         return self.computer_to_move is not None and not self.future
