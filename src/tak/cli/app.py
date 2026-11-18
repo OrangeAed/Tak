@@ -7,8 +7,9 @@ import textwrap
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
+from tak.ai.assess import add_eval_bar_argument, assess
 from tak.ai.base import Agent, player_headers
-from tak.cli.render import LEGEND, describe_result, render_board, render_status
+from tak.cli.render import LEGEND, describe_result, render_board, render_status, with_eval_bar
 from tak.engine.board import BOARD_CONFIG
 from tak.engine.game import Game
 from tak.engine.moves import Move
@@ -60,13 +61,15 @@ def run(
     write: Callable[[str], None] = print,
     save_dir: Path | None = None,
     players: Mapping[Color, Agent] | None = None,
+    eval_bar: bool = False,
 ) -> GameResult | None:
     """Play ``game`` until someone wins. Returns the result, or ``None`` if play was abandoned.
 
     ``players`` gives the computer player for either or both sides; moves for
     the other sides are read from the person at the terminal. If ``save_dir``
     is given, a finished game is saved there as a new PTN file. Abandoned
-    games are not saved.
+    games are not saved. ``eval_bar`` shows an evaluation bar beside the
+    board, with a line saying who is ahead (see :mod:`tak.ai.assess`).
     """
     players = dict(players or {})
     write(f"Tak on a {game.size}x{game.size} board. Type 'help' for how to enter moves.")
@@ -98,8 +101,13 @@ def run(
             continue
 
         write("")
-        write(render_board(game.board))
-        write(render_status(game, call))
+        if eval_bar:
+            assessment = assess(game)
+            write(with_eval_bar(render_board(game.board), assessment))
+            write(render_status(game, call, assessment.detail))
+        else:
+            write(render_board(game.board))
+            write(render_status(game, call))
         call = None
         try:
             line = read(_prompt(game)).strip()
@@ -141,7 +149,8 @@ def run(
                 call = threat_call(game, mover)
 
     write("")
-    write(render_board(game.board))
+    board = render_board(game.board)
+    write(with_eval_bar(board, assess(game)) if eval_bar else board)
     write("")
     write(f"Game over, {describe_result(game, game.result)}")
     write(f"Result: {game.result.ptn}")
@@ -202,10 +211,11 @@ def main(
         default=DEFAULT_SIZE,
         help=f"board size (default: {DEFAULT_SIZE})",
     )
+    add_eval_bar_argument(parser)
     add_save_arguments(parser)
     args = parser.parse_args(argv)
     try:
-        run(Game(args.size), read, write, save_dir=saves_dir_from(args))
+        run(Game(args.size), read, write, save_dir=saves_dir_from(args), eval_bar=args.eval_bar)
     except KeyboardInterrupt:
         write("")
         write("Game abandoned.")

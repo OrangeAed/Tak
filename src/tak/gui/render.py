@@ -20,11 +20,13 @@ the app can tell which square or button is under the mouse.
 from __future__ import annotations
 
 import functools
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 import pygame
 
+from tak.ai.assess import Assessment
 from tak.ai.explain import Explanation
 from tak.engine.board import BOARD_CONFIG, Board, Square
 from tak.engine.game import Game
@@ -32,6 +34,8 @@ from tak.engine.pieces import Color, Piece, PieceType
 from tak.engine.rules import GameResult, Reason, count_flats
 from tak.gui.scene import (
     BOARD_RIM,
+    DARK_WOOD,
+    LIGHT_WOOD,
     Camera,
     View,
     board_faces,
@@ -86,26 +90,40 @@ DEFAULT_WINDOW = (1080, 680)
 MIN_WINDOW = (860, 600)
 PANEL_WIDTH = 280
 MARGIN = 16
+#: How wide the evaluation bar is, when it's shown.
+BAR_WIDTH = 40
 
 
 @dataclass(frozen=True)
 class Layout:
-    """Where everything goes: the 3D viewport on the left, the panel on the right."""
+    """Where everything goes: the 3D viewport, with the panel on its right.
+
+    With the evaluation bar on, the bar runs down the left of the window and
+    the viewport starts after it.
+    """
 
     board_size: int
     viewport: pygame.Rect
     panel_rect: pygame.Rect
     window_size: tuple[int, int]
+    bar_rect: pygame.Rect | None = None
 
 
-def layout_for(board_size: int, window_size: tuple[int, int] = DEFAULT_WINDOW) -> Layout:
-    """Fit the viewport and panel to a window (no smaller than :data:`MIN_WINDOW`)."""
+def layout_for(
+    board_size: int, window_size: tuple[int, int] = DEFAULT_WINDOW, eval_bar: bool = False
+) -> Layout:
+    """Fit the viewport and panel (and the evaluation bar, if on) to a window.
+
+    The window is no smaller than :data:`MIN_WINDOW`.
+    """
     width = max(window_size[0], MIN_WINDOW[0])
     height = max(window_size[1], MIN_WINDOW[1])
-    view_width = width - PANEL_WIDTH - 3 * MARGIN
-    viewport = pygame.Rect(MARGIN, MARGIN, view_width, height - 2 * MARGIN)
+    bar = pygame.Rect(MARGIN, MARGIN, BAR_WIDTH, height - 2 * MARGIN) if eval_bar else None
+    left = bar.right + MARGIN if bar else MARGIN
+    view_width = width - left - PANEL_WIDTH - 2 * MARGIN
+    viewport = pygame.Rect(left, MARGIN, view_width, height - 2 * MARGIN)
     panel = pygame.Rect(viewport.right + MARGIN, MARGIN, PANEL_WIDTH, viewport.height)
-    return Layout(board_size, viewport, panel, (width, height))
+    return Layout(board_size, viewport, panel, (width, height), bar)
 
 
 # --- Fonts -------------------------------------------------------------------------
@@ -607,6 +625,63 @@ def _split_long(word: str, font: pygame.font.Font, width: int) -> list[str]:
     return [*pieces, word]
 
 
+# --- Evaluation bar -----------------------------------------------------------------
+
+#: The bar's two colors are the pieces' woods: White's maple and Black's walnut.
+BAR_COLORS = {Color.WHITE: LIGHT_WOOD.base, Color.BLACK: DARK_WOOD.base}
+#: The label's color on each side's part of the bar.
+BAR_LABEL = {Color.WHITE: DARK_WOOD.base, Color.BLACK: LIGHT_WOOD.base}
+
+
+def draw_eval_bar(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    fonts: Fonts,
+    assessment: Assessment,
+    near: Color = Color.WHITE,
+) -> None:
+    """A vertical bar split between White and Black by how far ahead each is.
+
+    ``near`` is the side of the board nearest the viewer; its part of the bar
+    is at the bottom. The side ahead has its score written at its end.
+    """
+    far = near.opponent
+    share = (assessment.white + 1) / 2 if near is Color.WHITE else (1 - assessment.white) / 2
+    share = min(1.0, max(0.0, share))  # the near side's share of the bar
+    pygame.draw.rect(surface, BAR_COLORS[far], rect, border_radius=6)
+    split = rect.bottom - round(share * rect.height)
+    if split < rect.bottom:
+        lower = pygame.Rect(rect.left, split, rect.width, rect.bottom - split)
+        radius = 6 if split <= rect.top + 6 else -1
+        pygame.draw.rect(
+            surface,
+            BAR_COLORS[near],
+            lower,
+            border_bottom_left_radius=6,
+            border_bottom_right_radius=6,
+            border_top_left_radius=radius,
+            border_top_right_radius=radius,
+        )
+    # A mark at the middle, where it's even.
+    pygame.draw.line(
+        surface, PANEL_RULE, (rect.left, rect.centery), (rect.right - 1, rect.centery), 2
+    )
+    pygame.draw.rect(surface, PANEL_RULE, rect, width=2, border_radius=6)
+
+    leader = assessment.leader or Color.WHITE
+    text = fonts.small.render(assessment.label, True, BAR_LABEL[leader])
+    if text.get_width() > rect.width - 4:
+        text = pygame.transform.smoothscale(
+            text, (rect.width - 4, round(text.get_height() * (rect.width - 4) / text.get_width()))
+        )
+    place = text.get_rect(centerx=rect.centerx)
+    if leader is near:
+        place.bottom = rect.bottom - 6
+    else:
+        place.top = rect.top + 6
+    surface.blit(text, place)
+
+
 # --- Explanation card ---------------------------------------------------------------
 
 #: The widest the explanation card gets, and the padding inside it.
@@ -708,14 +783,20 @@ def draw_game(
     controls: Controls | None = None,
     explanation: Explanation | None = None,
     explained: Sequence[Square] = (),
+    assessment: Assessment | None = None,
 ) -> Frame:
     """One full frame: the 3D board and the side panel, and any explanation over the board.
 
     ``explained`` are the squares the explained move touched, which the
-    explanation tries not to cover.
+    explanation tries not to cover. The evaluation bar shows ``assessment``
+    if the layout has room for it.
     """
     surface.fill(BACKGROUND)
-    frame = draw_scene(surface, game, layout, camera or Camera(), extras)
+    camera = camera or Camera()
+    if layout.bar_rect is not None and assessment is not None:
+        near = Color.WHITE if math.cos(camera.yaw) >= 0 else Color.BLACK
+        draw_eval_bar(surface, layout.bar_rect, fonts, assessment, near)
+    frame = draw_scene(surface, game, layout, camera, extras)
     frame.buttons = draw_panel(
         surface, game, layout, fonts, message, message_color, input_text, controls
     )

@@ -12,6 +12,8 @@ from any point if you like.
 - Step through the game with the panel's buttons, Ctrl+Left/Right (or
   Ctrl+Z/Y), and Ctrl+Home/End.
 - The window can be resized.
+- ``--eval-bar`` shows an evaluation bar down the left of the window: who is
+  ahead, and by how much, as the learner sees it (:mod:`tak.ai.assess`).
 - Against the computer (``python -m tak.play --gui``), it moves by itself
   when its turn comes, thinking in the background (:mod:`tak.gui.computer`).
   Against the learner, "Why this move?" in the panel explains its last move
@@ -31,6 +33,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from tak.ai.assess import Assessment, add_eval_bar_argument, assess
 from tak.ai.explain import Explanation, can_explain, explain_move
 from tak.engine.board import BOARD_CONFIG, Square
 from tak.engine.game import Game
@@ -62,6 +65,7 @@ class Controller:
         window_size: tuple[int, int] | None = None,
         message: Feedback | None = None,
         computer: ComputerTurn | None = None,
+        eval_bar: bool = False,
     ) -> None:
         import pygame
 
@@ -72,7 +76,10 @@ class Controller:
         self.render = render
         self.session = session
         self.builder = MoveBuilder()
-        self.layout = render.layout_for(session.game.size, window_size or render.DEFAULT_WINDOW)
+        self.eval_bar = eval_bar
+        self.layout = render.layout_for(
+            session.game.size, window_size or render.DEFAULT_WINDOW, eval_bar
+        )
         self.fonts = render.Fonts.default()
         self.default_camera = Camera()
         if session.players and Color.BLACK not in session.players:
@@ -84,6 +91,8 @@ class Controller:
         # position it belongs to (it closes once the game moves on).
         self.explanation: Explanation | None = None
         self.explained: Position | None = None
+        # The evaluation bar's reading, and the position it was taken in.
+        self._assessment: tuple[Position, Assessment] | None = None
 
         self.typed = ""
         self.message: Feedback | None = message
@@ -341,7 +350,7 @@ class Controller:
 
         That is the requested size, or bigger if it was below the minimum.
         """
-        self.layout = self.render.layout_for(self.game.size, size)
+        self.layout = self.render.layout_for(self.game.size, size, self.eval_bar)
         self.dirty = True
         return self.layout.window_size
 
@@ -398,21 +407,32 @@ class Controller:
             ),
             explanation=self.explanation,
             explained=last_squares,
+            assessment=self.assessment() if self.eval_bar else None,
         )
         self.dirty = False
+
+    def assessment(self) -> Assessment:
+        """How the position looks, for the evaluation bar (worked out once per position)."""
+        position = position_of(self.game)
+        if self._assessment is None or self._assessment[0] != position:
+            self._assessment = position, assess(self.game)
+        return self._assessment[1]
 
     def _thinking_text(self) -> str | None:
         agent = self.computer.agent
         return f"{agent.name} is thinking\u2026" if self.computer.busy and agent else None
 
 
-def run(session: GameSession, message: Feedback | None = None) -> None:
-    """Open the window on ``session`` and run until it is closed."""
+def run(session: GameSession, message: Feedback | None = None, eval_bar: bool = False) -> None:
+    """Open the window on ``session`` and run until it is closed.
+
+    ``eval_bar`` shows the evaluation bar down the left of the window.
+    """
     import pygame
 
     pygame.init()
     pygame.key.set_repeat(KEY_REPEAT_DELAY, KEY_REPEAT_INTERVAL)
-    controller = Controller(session, message=message)
+    controller = Controller(session, message=message, eval_bar=eval_bar)
     pygame.display.set_mode(controller.layout.window_size, pygame.RESIZABLE)
     title = f"Tak {session.game.size}\u00d7{session.game.size}"
     if session.source is not None:
@@ -459,6 +479,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="FILE",
         help="open a saved game (PTN) to step through it, or to play on from any point",
     )
+    add_eval_bar_argument(parser)
     add_save_arguments(parser)
     args = parser.parse_args(argv)
 
@@ -483,5 +504,5 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     else:
         session = GameSession(Game(args.size or DEFAULT_SIZE), save_dir)
-    run(session, message)
+    run(session, message, eval_bar=args.eval_bar)
     return 0

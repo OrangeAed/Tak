@@ -176,6 +176,16 @@ class TestMain:
         assert "Tak on a 3x3 board" in session.text
         assert "Result: R-0" in session.text
 
+    def test_the_evaluation_bar(self) -> None:
+        session = Session(ROAD_GAME)
+        assert main(["--size", "3", "--eval-bar"], session.read, session.write) == 0
+        assert " |w|" in session.text and "Evaluation: It's about even" in session.text
+        boards = [text for text in session.output if "|w|" in text or "|b|" in text]
+        assert boards[-1].splitlines()[-1].startswith(" R-0 ")  # the final board: White won
+        plain = Session(ROAD_GAME)
+        main(["--size", "3"], plain.read, plain.write)
+        assert "|w|" not in plain.text and "Evaluation" not in plain.text
+
     def test_default_board_is_five_by_five(self) -> None:
         session = Session(["quit"])
         main([], session.read, session.write)

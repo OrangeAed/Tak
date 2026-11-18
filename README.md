@@ -42,7 +42,11 @@ python -m tak.gui --size 6       # on another board size (3 to 8; the default is
 python -m tak.gui --load saves/2026-11-09_14-03-22_5x5_white-road.ptn   # step through a saved game
 
 python -m tak.play               # play against the computer (see below for the options)
+
+python -m tak.gui --eval-bar     # any of these with an evaluation bar (see below)
 ```
+
+**The evaluation bar.** Add `--eval-bar` to `tak.cli`, `tak.gui`, or `tak.play` to show who is ahead, and by how much, as Learner sees it. In the window, a bar runs down the left of the board, split between White's maple and Black's walnut. The side ahead has its score written at its end, and a mark shows where it would be even. The side of the table you're looking from is at the bottom, so the bar turns over when you press Tab. In the terminal, a column of `b` and `w` cells runs down the left of the board (Black's share at the top, on Black's side), with the score beneath it: positive when White is ahead, negative when Black is. A line under the reserves says the same in words, e.g. `Evaluation: White is ahead (+0.31).` The score runs from -1 (Black winning) to +1 (White winning). It comes from Learner's learned evaluation, with the sure-fire tactics on top: if the player to move can win on the spot, or the player who just moved has Tinue, the bar fills for them and reads `Win`. A finished game shows its result. It's the same number Learner gives under "How it rates its position now" when it explains a move. It takes a few milliseconds per move, whoever you're playing, even in a game between two people.
 
 The window shows the board in 3D. White plays light maple and Black dark walnut; flat stones are low octagonal tiles, walls are tiles standing on edge, and capstones are tall bevelled drums. Stacks are built up layer by layer so you can read them from the side, and each stack of two or more has a tag with its height. Ranks and files are marked on all four sides of the frame.
 
@@ -81,6 +85,7 @@ python -m tak.play -b random -c black -s 4 --gui    # in the window
 | `-c`, `--color` | `white`, `black`, or `random`: the color *you* play. White moves first | `white` |
 | `-s`, `--size` | 3 to 8 | 5 |
 | `--gui` | play in the 3D window instead of the terminal (needs the gui extra) | terminal |
+| `--eval-bar` | show the evaluation bar on the left (see [Usage](#usage)) | off |
 | `--seed N` | fix the computer's choices (and a random color) across games, see below | |
 
 `--saves-dir DIR` and `--no-save` work as for the other commands. The same game can be started from Python:
@@ -251,6 +256,7 @@ Tak/
 │           ├── evaluation.py # scoring a position: roads, center, squares, flats (hand-tuned)
 │           ├── learning.py   # the Learner's features and learned evaluation
 │           ├── explain.py    # plain-words explanations of the Learner's moves ("Why this move?")
+│           ├── assess.py     # who is ahead, as the Learner sees it: the evaluation bar
 │           ├── learner_weights.json # the Learner's trained weights
 │           ├── training.py   # teaching the Learner: TD(lambda) learning from self-play
 │           └── minimax.py    # deeper search (planned; placeholder)
@@ -262,7 +268,7 @@ Tak/
 │   ├── cli/
 │   ├── ai/                   # computer players, with the fast look-ahead checked against the engine;
 │   │                         #   test_learner.py covers the Learner's features, search and training,
-│   │                         #   test_explain.py its explanations
+│   │                         #   test_explain.py its explanations, test_assess.py the evaluation bar
 │   ├── gui/                  # clicking, stepping, picking, drawing, controls (headless pygame)
 │   └── threats/              # Tak and Tinue, from the engine through to the terminal
 │       ├── conftest.py                   # position builder, scripted terminal sessions
@@ -299,7 +305,7 @@ Tak/
 
 **`tak.gui`: graphical play (optional).** Draws the board in 3D in a pygame window, with rank and file labels, every stack built up piece by piece, and both players' reserves; the view can be turned, tilted, and zoomed. pygame only draws 2D shapes, so `scene.py` does the 3D itself (perspective projection, shading, and back-to-front painting), with no other dependencies. Moves are made by clicking (checked step by step against the engine's legal moves) or typed in PTN, and any game, including a saved one, can be stepped through. Its dependency is an optional extra (`pip install -e ".[gui]"`), so the rest of the project does not require it. Start it with `python -m tak.gui`, or `python -m tak.play --gui` to play the computer; the computer thinks in a background thread (`computer.py`) so the window stays responsive.
 
-**`tak.ai`: computer players.** Every computer player implements the `Agent` interface in `base.py`: given a game, return a move, without changing the game (agents think on a copy, `Game.copy()`). The four players are described under [Playing against the computer](#playing-against-the-computer). The first three are built from two modules of plain, hand-tuned code. `tactics.py` answers "can this player win right now?", "does this move hand the opponent a win?" and "is this Tinue?". It gives the same answers as the engine's own checks but several times faster, which matters because the stronger players ask after every move they consider. Road wins by placement are read off the connected groups of road pieces. A slide is only tried one by one when the line it moves along could possibly complete a road. Near the end, where flat wins are possible, it defers to the engine. `evaluation.py` scores positions for the Strategist. The Learner uses `tactics.py` too, with its own faster search for wins near the end of the game (checked against the engine in the tests), and scores positions with `learning.py`, whose weights come from `training.py` (see [Training the learner](#training-the-learner)). `explain.py` turns the Learner's record of how it chose a move into a short explanation, for the window's **Why this move?** button. Deeper search (`minimax.py`) is still a placeholder.
+**`tak.ai`: computer players.** Every computer player implements the `Agent` interface in `base.py`: given a game, return a move, without changing the game (agents think on a copy, `Game.copy()`). The four players are described under [Playing against the computer](#playing-against-the-computer). The first three are built from two modules of plain, hand-tuned code. `tactics.py` answers "can this player win right now?", "does this move hand the opponent a win?" and "is this Tinue?". It gives the same answers as the engine's own checks but several times faster, which matters because the stronger players ask after every move they consider. Road wins by placement are read off the connected groups of road pieces. A slide is only tried one by one when the line it moves along could possibly complete a road. Near the end, where flat wins are possible, it defers to the engine. `evaluation.py` scores positions for the Strategist. The Learner uses `tactics.py` too, with its own faster search for wins near the end of the game (checked against the engine in the tests), and scores positions with `learning.py`, whose weights come from `training.py` (see [Training the learner](#training-the-learner)). `explain.py` turns the Learner's record of how it chose a move into a short explanation, for the window's **Why this move?** button, and `assess.py` reads a position for the evaluation bar (`--eval-bar`). Deeper search (`minimax.py`) is still a placeholder.
 
 **`tak.play`: playing the computer.** The `python -m tak.play` command and the `play_against_bot()` function: choose the opponent, your color, the board size, and the terminal or the window.
 

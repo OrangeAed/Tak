@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tak.ai.assess import Assessment
 from tak.engine.board import BOARD_CONFIG, Board, Square
 from tak.engine.game import Game
 from tak.engine.pieces import Color, Piece, PieceType
@@ -40,6 +41,23 @@ def render_board(board: Board) -> str:
     return "\n".join(lines)
 
 
+def with_eval_bar(board_text: str, assessment: Assessment) -> str:
+    """``board_text`` (from :func:`render_board`) with an evaluation bar down its left.
+
+    The bar is made of ``b`` cells for Black's share at the top (Black's side
+    of the board) and ``w`` cells for White's at the bottom, with the score
+    beneath it: positive when White is ahead, negative when Black is.
+    """
+    lines = board_text.split("\n")
+    cells = len(lines) - 1  # every line but the file letters
+    white = min(cells, max(0, round((assessment.white + 1) / 2 * cells)))
+    bar = ["|b|"] * (cells - white) + ["|w|"] * white
+    label = assessment.label if assessment.decided else f"{assessment.white:+.2f}"
+    rows = [f" {cell} {line}" for cell, line in zip(bar, lines, strict=False)]
+    rows.append(f"{label:^5}{lines[-1]}")
+    return "\n".join(rows)
+
+
 def _describe_reserve(game: Game, color: Color) -> str:
     reserve = game.reserve(color)
     text = f"{color}: {reserve.stones} stones"
@@ -48,14 +66,18 @@ def _describe_reserve(game: Game, color: Color) -> str:
     return text
 
 
-def render_status(game: Game, call: str | None = None) -> str:
+def render_status(game: Game, call: str | None = None, evaluation: str | None = None) -> str:
     """Reserves and whose turn it is.
 
     ``call`` is an announcement about the last move, such as "Tak!" or
     "Tinue!"; it goes just before the line saying whose turn it is.
+    ``evaluation`` says who is ahead, for the evaluation bar; it goes after
+    the reserves.
     """
     reserves = "   ".join(_describe_reserve(game, color) for color in Color)
     lines = [reserves]
+    if evaluation:
+        lines.append(f"Evaluation: {evaluation}")
     if call:
         lines.append(call)
     lines.append(f"Turn {game.turn_number}: {game.to_move} to move.")

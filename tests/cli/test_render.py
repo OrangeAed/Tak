@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from tak.ai.assess import Assessment
 from tak.cli.render import (
     describe_result,
     piece_label,
     render_board,
     render_status,
     stack_label,
+    with_eval_bar,
 )
 from tak.engine import Board, Color, Game, Piece, PieceType, Square
 
@@ -99,3 +101,39 @@ def test_describe_draw(started: Callable[..., Game]) -> None:
     game = started("a2 a3 c3 Sb1 Sb2 b3 Sa1 c2 c1", size=3)
     assert game.result is not None
     assert describe_result(game, game.result) == "Draw: both players have 3 flat stones on top."
+
+
+def bar_cells(text: str) -> list[str]:
+    return [line[1:4] for line in text.splitlines()[:-1]]
+
+
+def test_the_evaluation_bar_runs_down_the_left_of_the_board() -> None:
+    board = render_board(Board(3))
+    text = with_eval_bar(board, Assessment(0.0, "0.00", "It's about even (+0.00)."))
+    lines = text.splitlines()
+    assert len(lines) == len(board.splitlines())
+    for line, original in zip(lines, board.splitlines(), strict=True):
+        assert line.endswith(original)
+    cells = bar_cells(text)
+    assert cells[: cells.index("|w|")] == ["|b|"] * cells.index("|w|")  # Black on top
+    assert set(cells[cells.index("|w|") :]) == {"|w|"}  # White below, on White's side
+    assert abs(cells.count("|w|") - cells.count("|b|")) <= 1  # about even
+    assert lines[-1].startswith("+0.00")
+
+
+def test_the_bar_follows_the_score() -> None:
+    board = render_board(Board(5))
+    white = bar_cells(with_eval_bar(board, Assessment(0.6, "0.60", "")))
+    black = bar_cells(with_eval_bar(board, Assessment(-0.6, "0.60", "")))
+    assert white.count("|w|") > white.count("|b|")
+    assert black.count("|b|") > black.count("|w|")
+    won = with_eval_bar(board, Assessment(1.0, "R-0", "", decided=True))
+    assert set(bar_cells(won)) == {"|w|"}
+    assert won.splitlines()[-1].startswith(" R-0 ")
+
+
+def test_status_can_say_who_is_ahead() -> None:
+    status = render_status(Game(3), "Tak!", "White is ahead (+0.30).")
+    lines = status.splitlines()
+    assert lines[1] == "Evaluation: White is ahead (+0.30)."
+    assert lines[2] == "Tak!"

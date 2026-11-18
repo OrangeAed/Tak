@@ -5,6 +5,7 @@ From the command line::
     python -m tak.play                                   # Greedy; you play White on 5x5
     python -m tak.play --bot strategist --color random   # the strongest, either color
     python -m tak.play --bot random --color black --size 4 --gui
+    python -m tak.play --bot learner --gui --eval-bar     # with an evaluation bar
 
 Or from Python::
 
@@ -26,6 +27,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from tak.ai import AGENTS, make_agent
+from tak.ai.assess import add_eval_bar_argument
 from tak.engine.board import BOARD_CONFIG
 from tak.engine.game import Game
 from tak.engine.pieces import Color
@@ -59,6 +61,7 @@ def play_against_bot(
     size: int = DEFAULT_SIZE,
     *,
     gui: bool = False,
+    eval_bar: bool = False,
     seed: int | None = None,
     save_dir: Path | None = None,
     save: bool = True,
@@ -73,6 +76,8 @@ def play_against_bot(
       ``random``. The computer plays the other.
     - ``size``: the board size, 3 to 8.
     - ``gui``: play in the 3D window (needs pygame) instead of the terminal.
+    - ``eval_bar``: show an evaluation bar on the left: who is ahead, and by
+      how much, as the learner sees it.
     - ``seed``: fixes the computer's choices for good (and a random color). In
       any one game the computer always plays the same move in the same
       position; without a seed, a new game may play differently, while with
@@ -99,13 +104,16 @@ def play_against_bot(
         from tak.gui.app import run as run_window
         from tak.gui.session import INFO, GameSession
 
-        run_window(GameSession(Game(size), folder, players), message=(INFO, intro))
+        session = GameSession(Game(size), folder, players)
+        run_window(session, message=(INFO, intro), eval_bar=eval_bar)
         return None
 
     from tak.cli.app import run as run_terminal
 
     write(intro)
-    return run_terminal(Game(size), read, write, save_dir=folder, players=players)
+    return run_terminal(
+        Game(size), read, write, save_dir=folder, players=players, eval_bar=eval_bar
+    )
 
 
 def main(
@@ -154,6 +162,7 @@ def main(
         help="fix the computer's choices (and a random color) across games; within one game "
         "it always plays the same move in the same position anyway",
     )
+    add_eval_bar_argument(parser)
     add_save_arguments(parser)
     args = parser.parse_args(argv)
 
@@ -171,6 +180,7 @@ def main(
             args.color,
             args.size,
             gui=args.gui,
+            eval_bar=args.eval_bar,
             seed=args.seed,
             save_dir=save_dir,
             save=save_dir is not None,

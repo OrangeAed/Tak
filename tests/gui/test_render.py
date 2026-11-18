@@ -8,6 +8,7 @@ from collections.abc import Callable
 import pygame
 import pytest
 
+from tak.ai.assess import Assessment
 from tak.ai.explain import Explanation
 from tak.engine import BOARD_CONFIG, Color, Game, Piece, PieceType, Square
 from tak.gui import render
@@ -343,3 +344,60 @@ class TestExplanation:
         # Squares at the back stay clear of it where it usually goes.
         back = tuple(Square(file, 4) for file in range(3))
         assert self.draw(explained=back).buttons[render.EXPLANATION_CARD] == bottom
+
+
+class TestEvalBar:
+    @pytest.mark.parametrize("window", [render.MIN_WINDOW, render.DEFAULT_WINDOW, (1920, 1080)])
+    def test_the_bar_runs_down_the_left(self, window: tuple[int, int]) -> None:
+        plain = render.layout_for(5, window)
+        layout = render.layout_for(5, window, eval_bar=True)
+        bar = layout.bar_rect
+        assert plain.bar_rect is None and bar is not None
+        assert pygame.Rect((0, 0), layout.window_size).contains(bar)
+        assert bar.right < layout.viewport.left  # the board moves over to make room
+        assert bar.height == layout.viewport.height
+        assert layout.panel_rect == plain.panel_rect  # the panel stays where it was
+        assert not layout.viewport.colliderect(layout.panel_rect)
+
+    def draw(self, white: float, near: Color = Color.WHITE) -> tuple[pygame.Surface, pygame.Rect]:
+        rect = pygame.Rect(10, 10, render.BAR_WIDTH, 400)
+        surface = pygame.Surface((100, 420))
+        label = f"{abs(white):.2f}"
+        render.draw_eval_bar(
+            surface, rect, render.Fonts.default(), Assessment(white, label, ""), near
+        )
+        return surface, rect
+
+    def wood_at(self, surface: pygame.Surface, rect: pygame.Rect, fraction: float) -> Color:
+        """Whose wood the bar shows at ``fraction`` of the way down it (off the label)."""
+        pixel = tuple(surface.get_at((rect.left + 4, rect.top + round(fraction * rect.height))))
+        light = sum(pixel[:3]) > sum(render.BAR_COLORS[Color.BLACK]) + 150
+        return Color.WHITE if light else Color.BLACK
+
+    def test_the_split_follows_the_score(self) -> None:
+        even, rect = self.draw(0.0)
+        assert self.wood_at(even, rect, 0.3) is Color.BLACK
+        assert self.wood_at(even, rect, 0.7) is Color.WHITE
+        white_ahead, rect = self.draw(0.6)  # White has 80% of the bar
+        assert self.wood_at(white_ahead, rect, 0.3) is Color.WHITE
+        black_ahead, rect = self.draw(-0.6)
+        assert self.wood_at(black_ahead, rect, 0.7) is Color.BLACK
+
+    def test_the_side_nearest_the_viewer_is_at_the_bottom(self) -> None:
+        surface, rect = self.draw(0.6, near=Color.BLACK)  # seen from Black's side
+        assert self.wood_at(surface, rect, 0.95) is Color.BLACK
+        assert self.wood_at(surface, rect, 0.4) is Color.WHITE
+
+    def test_a_win_fills_the_bar(self) -> None:
+        surface, rect = self.draw(-1.0)
+        assert all(self.wood_at(surface, rect, f) is Color.BLACK for f in (0.2, 0.5, 0.97))
+
+    def test_drawn_with_the_game_when_there_is_room(self) -> None:
+        layout = render.layout_for(5, eval_bar=True)
+        surface = pygame.Surface(layout.window_size)
+        fonts = render.Fonts.default()
+        reading = Assessment(1.0, "Win", "", decided=True)
+        render.draw_game(surface, Game(5), layout, fonts, assessment=reading)
+        bar = layout.bar_rect
+        assert bar is not None
+        assert surface.get_at((bar.left + 4, bar.top + 40))[:3] == render.BAR_COLORS[Color.WHITE]

@@ -14,6 +14,7 @@ import pygame
 import pytest
 
 from tak.ai import Agent, LearnerAgent, make_agent
+from tak.ai.assess import assess as assess_position
 from tak.engine import (
     Color,
     Game,
@@ -38,8 +39,13 @@ ROAD_WIN = ["a1", "c3", "b1", "b3", "b2", "a3", "c2"]
 class Window:
     """A controller plus an off-screen surface to draw on, with input helpers."""
 
-    def __init__(self, session: GameSession | None = None, size: tuple[int, int] | None = None):
-        self.controller = Controller(session or GameSession(Game(5)), size)
+    def __init__(
+        self,
+        session: GameSession | None = None,
+        size: tuple[int, int] | None = None,
+        eval_bar: bool = False,
+    ):
+        self.controller = Controller(session or GameSession(Game(5)), size, eval_bar=eval_bar)
         self.surface = pygame.Surface(self.controller.layout.window_size)
         self.draw()
 
@@ -312,9 +318,13 @@ class TestMain:
     @pytest.fixture
     def runs(self, monkeypatch: pytest.MonkeyPatch) -> list[tuple[GameSession, object]]:
         calls: list[tuple[GameSession, object]] = []
-        monkeypatch.setattr(
-            "tak.gui.app.run", lambda session, message: calls.append((session, message))
-        )
+        self.bars: list[bool] = []
+
+        def run(session: GameSession, message: object, eval_bar: bool = False) -> None:
+            calls.append((session, message))
+            self.bars.append(eval_bar)
+
+        monkeypatch.setattr("tak.gui.app.run", run)
         return calls
 
     def test_default_is_a_new_five_by_five_game(self, runs: list, saves_dir: Path) -> None:
@@ -353,6 +363,11 @@ class TestMain:
     def test_load_and_size_exclude_each_other(self, tmp_path: Path) -> None:
         with pytest.raises(SystemExit):
             main(["--load", str(tmp_path / "x.ptn"), "--size", "5"])
+
+    def test_the_evaluation_bar_is_off_unless_asked_for(self, runs: list) -> None:
+        main([])
+        main(["--eval-bar"])
+        assert self.bars == [False, True]
 
     def test_save_options(self, runs: list, tmp_path: Path) -> None:
         main(["--saves-dir", str(tmp_path)])
@@ -534,6 +549,30 @@ class TestAgainstTheComputer:
         kind, text = window.controller.message
         assert kind == BAD and text.startswith("Scripty couldn't choose a move: a1 is already")
         assert window.game.ply == 1
+
+
+class TestEvalBar:
+    def test_off_unless_asked_for(self) -> None:
+        assert Window().controller.layout.bar_rect is None
+
+    def test_on_it_reads_the_position_and_keeps_up_with_the_game(self) -> None:
+        window = Window(eval_bar=True)
+        controller = window.controller
+        assert controller.layout.bar_rect is not None
+        first = controller.assessment()
+        assert controller.assessment() is first  # worked out once per position
+        window.type("a1")
+        window.type("e5")
+        window.click_square("c3")  # clicks still land, with the board moved over
+        assert window.game.history[-1].move == parse_move("c3")
+        assert controller.assessment() is not first
+        window.click_button("nav:back")
+        assert controller.assessment().white == pytest.approx(assess_position(window.game).white)
+
+    def test_it_stays_on_when_the_window_is_resized(self) -> None:
+        controller = Controller(GameSession(Game(5)), eval_bar=True)
+        controller.resize((1400, 900))
+        assert controller.layout.bar_rect is not None
 
 
 class TestWhyThisMove:

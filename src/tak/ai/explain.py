@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeGuard
 
+from tak.ai.assess import FAR, NEAR
 from tak.ai.base import Agent
 from tak.ai.evaluation import endgame, longest_road, road_gap
 from tak.ai.learner_agent import Decision, LearnerAgent, find_win
@@ -373,14 +374,14 @@ def _outlook(decision: Decision) -> str | None:
     chosen = decision.chosen
     if chosen is None or chosen.features is None:
         return None
-    rating = chosen.value
-    if rating > 0.6:
+    rating = chosen.value  # the same number as the evaluation bar (tak.ai.assess)
+    if rating > FAR:
         words = "well ahead"
-    elif rating > 0.2:
+    elif rating > NEAR:
         words = "ahead"
-    elif rating >= -0.2:
+    elif rating >= -NEAR:
         words = "about even"
-    elif rating >= -0.6:
+    elif rating >= -FAR:
         words = "behind"
     else:
         words = "well behind"

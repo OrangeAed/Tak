@@ -142,15 +142,40 @@ class TestPlayAgainstBot:
     def test_the_window(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         opened = []
         monkeypatch.setattr(
-            "tak.gui.app.run", lambda session, message: opened.append((session, message))
+            "tak.gui.app.run",
+            lambda session, message, eval_bar: opened.append((session, message, eval_bar)),
         )
         assert play_against_bot("strategist", "black", 6, gui=True, save_dir=tmp_path) is None
-        [(session, message)] = opened
+        [(session, message, eval_bar)] = opened
+        assert eval_bar is False
         assert session.game.size == 6
         assert list(session.players) == [Color.WHITE]
         assert isinstance(session.players[Color.WHITE], StrategistAgent)
         assert session.recorder.save_dir == tmp_path
         assert message == ("info", "You play Black against Strategist.")
+
+    def test_the_window_with_the_evaluation_bar(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        opened = []
+        monkeypatch.setattr(
+            "tak.gui.app.run", lambda session, message, eval_bar: opened.append(eval_bar)
+        )
+        play_against_bot("learner", gui=True, eval_bar=True, save=False)
+        assert opened == [True]
+
+    def test_the_evaluation_bar_in_the_terminal(self) -> None:
+        person = FirstMovePlayer(limit=6)
+        play_against_bot(
+            "learner",
+            "white",
+            4,
+            eval_bar=True,
+            seed=2,
+            save=False,
+            read=person.read,
+            write=person.write,
+        )
+        assert " |w|" in person.text and " |b|" in person.text
+        assert "Evaluation: " in person.text
 
 
 class TestMain:
@@ -161,6 +186,14 @@ class TestMain:
         [(args, options)] = calls
         assert args == ("greedy", "white", 5)
         assert options["gui"] is False
+        assert options["eval_bar"] is False
+
+    def test_the_evaluation_bar_option(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls = []
+        monkeypatch.setattr(play, "play_against_bot", lambda *a, **k: calls.append((a, k)))
+        main(["--eval-bar", "--gui"])
+        [(_, options)] = calls
+        assert options["eval_bar"] is True and options["gui"] is True
 
     def test_options(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         calls = []
